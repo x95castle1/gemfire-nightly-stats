@@ -1,113 +1,91 @@
 {
-  "collected_at": "2026-09-23T17:24:25Z",
+  "collected_at": "2026-09-23T17:38:55Z",
   "cluster": {
-    "env": "local-docker",
-    "cluster_name": "gemfire-runner",
+    "env": "local-mac",
+    "cluster_name": "native-test",
     "locators": [
-      "locator-0"
+      "native-locator"
     ],
     "locators_count": 1,
     "servers": [
-      "server-0",
-      "server-1"
+      "native-server-0",
+      "native-server-1"
     ],
     "servers_count": 2,
-    "nodes": 3,
-    "regions_count": 16,
+    "nodes": 1,
+    "regions_count": 5,
     "regions": [
       {
-        "path": "/Account",
-        "region_type": "PARTITION",
-        "replication": "partition"
-      },
-      {
-        "path": "/Examplegold_Enrollment",
-        "region_type": "PARTITION",
-        "replication": "partition"
-      },
-      {
-        "path": "/Gateway",
+        "path": "/NativeLocal",
         "region_type": "NORMAL",
         "replication": "neither"
       },
       {
-        "path": "/Hello",
-        "region_type": "NORMAL",
-        "replication": "neither"
+        "path": "/NativePartition",
+        "region_type": "PARTITION",
+        "replication": "partition"
       },
       {
-        "path": "/MarketPrices",
+        "path": "/NativePartitionPersistent",
         "region_type": "PERSISTENT_PARTITION",
         "replication": "partition"
       },
       {
-        "path": "/RIC_ISIN_EXCHANGE",
-        "region_type": "PERSISTENT_REPLICATE",
-        "replication": "replicate"
-      },
-      {
-        "path": "/TFMT_TM_SDK_CH_PARAMETER",
+        "path": "/NativeReplicate",
         "region_type": "REPLICATE",
         "replication": "replicate"
       },
       {
-        "path": "/Transaction",
-        "region_type": "PARTITION",
-        "replication": "partition"
-      },
-      {
-        "path": "/UsersWithDelta",
-        "region_type": "REPLICATE",
-        "replication": "replicate"
-      },
-      {
-        "path": "/cachedPersistentPartitionRegion",
-        "region_type": "PERSISTENT_PARTITION",
-        "replication": "partition"
-      },
-      {
-        "path": "/nonPooledRegion",
-        "region_type": "NORMAL",
-        "replication": "neither"
-      },
-      {
-        "path": "/persistentPartitionRegion",
-        "region_type": "PERSISTENT_PARTITION",
-        "replication": "partition"
-      },
-      {
-        "path": "/persistentPartitionRegionCutover",
-        "region_type": "PERSISTENT_PARTITION",
-        "replication": "partition"
-      },
-      {
-        "path": "/persistentReplicatedRegion",
+        "path": "/NativeReplicatePersistent",
         "region_type": "PERSISTENT_REPLICATE",
         "replication": "replicate"
-      },
-      {
-        "path": "/persistentReplicatedRegion2",
-        "region_type": "PERSISTENT_REPLICATE",
-        "replication": "replicate"
-      },
-      {
-        "path": "/pooledRegion",
-        "region_type": "NORMAL",
-        "replication": "neither"
       }
     ]
   },
   "members": [
     {
-      "name": "locator-0",
+      "name": "native-locator",
       "type": "locator",
-      "host": "gemfire-locator-0",
+      "host": "192.168.68.60",
       "os": {
-        "kernel": "Linux 6.10.14-linuxkit aarch64",
+        "kernel": "Mac OS X 15.6 aarch64",
         "distribution": null
       },
       "address_family": "IPv4",
-      "memory_bytes": 23316455424,
+      "memory_bytes": 38654705664,
+      "memory_quotas": {
+        "heap_max_mb": 512,
+        "off_heap_max_bytes": 0
+      },
+      "available_processors": 12,
+      "server_core": null,
+      "partition_core": null,
+      "pvu_per_core": null,
+      "uptime_seconds": 14,
+      "software_version": "10.3.2",
+      "installation_path": "/Users/example/dev/vmware-gemfire-10.3.2",
+      "encryption": {
+        "ssl_enabled": true,
+        "ssl_enabled_components": [
+          "ALL"
+        ]
+      },
+      "tls": {
+        "ssl_protocols": "TLSv1.2 TLSv1.3",
+        "ssl_client_protocols": null,
+        "ssl_server_protocols": null
+      }
+    },
+    {
+      "name": "native-server-0",
+      "type": "server",
+      "host": "192.168.68.60",
+      "os": {
+        "kernel": "Mac OS X 15.6 aarch64",
+        "distribution": null
+      },
+      "address_family": "IPv4",
+      "memory_bytes": 38654705664,
       "memory_quotas": {
         "heap_max_mb": 1024,
         "off_heap_max_bytes": 0
@@ -116,9 +94,9 @@
       "server_core": null,
       "partition_core": null,
       "pvu_per_core": null,
-      "uptime_seconds": 2962,
-      "software_version": "10.3.0",
-      "installation_path": "/gemfire",
+      "uptime_seconds": 62,
+      "software_version": "10.3.2",
+      "installation_path": "/Users/example/dev/vmware-gemfire-10.3.2",
       "encryption": {
         "ssl_enabled": true,
         "ssl_enabled_components": [
@@ -126,32 +104,32 @@
         ]
       },
       "tls": {
-        "ssl_protocols": "TLSv1.2,TLSv1.3",
+        "ssl_protocols": "TLSv1.2 TLSv1.3",
         "ssl_client_protocols": null,
         "ssl_server_protocols": null
       }
     },
     {
-      "name": "server-0",
+      "name": "native-server-1",
       "type": "server",
-      "host": "gemfire-server-0",
+      "host": "192.168.68.60",
       "os": {
-        "kernel": "Linux 6.10.14-linuxkit aarch64",
+        "kernel": "Mac OS X 15.6 aarch64",
         "distribution": null
       },
       "address_family": "IPv4",
-      "memory_bytes": 23316455424,
+      "memory_bytes": 38654705664,
       "memory_quotas": {
-        "heap_max_mb": 4096,
-        "off_heap_max_bytes": 1073741824
+        "heap_max_mb": 1024,
+        "off_heap_max_bytes": 0
       },
       "available_processors": 12,
       "server_core": null,
       "partition_core": null,
       "pvu_per_core": null,
-      "uptime_seconds": 2946,
-      "software_version": "10.3.0",
-      "installation_path": "/gemfire",
+      "uptime_seconds": 58,
+      "software_version": "10.3.2",
+      "installation_path": "/Users/example/dev/vmware-gemfire-10.3.2",
       "encryption": {
         "ssl_enabled": true,
         "ssl_enabled_components": [
@@ -159,40 +137,7 @@
         ]
       },
       "tls": {
-        "ssl_protocols": "TLSv1.2,TLSv1.3",
-        "ssl_client_protocols": null,
-        "ssl_server_protocols": null
-      }
-    },
-    {
-      "name": "server-1",
-      "type": "server",
-      "host": "gemfire-server-1",
-      "os": {
-        "kernel": "Linux 6.10.14-linuxkit aarch64",
-        "distribution": null
-      },
-      "address_family": "IPv4",
-      "memory_bytes": 23316455424,
-      "memory_quotas": {
-        "heap_max_mb": 4096,
-        "off_heap_max_bytes": 1073741824
-      },
-      "available_processors": 12,
-      "server_core": null,
-      "partition_core": null,
-      "pvu_per_core": null,
-      "uptime_seconds": 2946,
-      "software_version": "10.3.0",
-      "installation_path": "/gemfire",
-      "encryption": {
-        "ssl_enabled": true,
-        "ssl_enabled_components": [
-          "ALL"
-        ]
-      },
-      "tls": {
-        "ssl_protocols": "TLSv1.2,TLSv1.3",
+        "ssl_protocols": "TLSv1.2 TLSv1.3",
         "ssl_client_protocols": null,
         "ssl_server_protocols": null
       }
