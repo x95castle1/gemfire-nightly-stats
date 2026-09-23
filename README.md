@@ -36,14 +36,27 @@
 
 ## Verification
 
-Checked on 2026-09-23 against the local gemfire-runner cluster: Tanzu GemFire 10.3.0, 1 locator + 2 servers in Docker, SSL off. TLS protocol settings were also checked on a throwaway locator, with them set both as `-D` flags and in `gemfire.properties` / `gfsecurity.properties`.
+Three test runs on 2026-09-23. Each one read every value through a single JMX connection to the locator:
 
-The `Sample:` values in the table and [`sample-output.json`](sample-output.json) come from the same JMX connection to that cluster. `local-docker` and `gemfire-runner` stand in for the Env and cluster_name values given at setup. `server_core`, `partition_core` and `pvu_per_core` stay `null` until their meaning is settled.
+1. **gemfire-runner in Docker, SSL off.** Tanzu GemFire 10.3.0, 1 locator + 2 servers. Every source in the table was checked here.
+2. **The same cluster with SSL on.** It was restarted with gemfire-runner's TLS option (`tls_version` = `TLSv1.2,TLSv1.3`), which sets `ssl-enabled-components=all` and `ssl-protocols=TLSv1.2,TLSv1.3` on every member.
+   - Every member's `Member` values still came through the locator. IPs, heap, off-heap and uptime differed per member, so they're each member's own values.
+   - Encryption: `securableCommunicationChannel` was `["ALL"]` on every member. The legacy `clusterSSLEnabled` / `serverSSLEnabled` / … flags stayed `false`; they only reflect the old `cluster-ssl-*` style properties.
+   - TLS: `describe config` returned `ssl-protocols` = `TLSv1.2,TLSv1.3`, from the `-D` flag in `jvm-args`. `SSLProtocols` was still `null`.
+   - A remote JMX client needs GemFire's jars on its classpath, because the manager hands it `org.apache.geode.management.internal.ContextAwareSSLRMIClientSocketFactory`. It also needs a client certificate, because GemFire requires mutual TLS by default. Neither applies to code running inside a member.
+3. **Native processes on a Mac, no Docker.** A locator and a server were started with gfsh from a local GemFire 10.3.2 install.
+   - Memory, CPU count, IP, install path, version and heap all matched the Mac's own values (`hw.memsize`, `hw.ncpu`, the `en0` address, the install folder).
+   - `Member.Host` and the start of `Member.Id` were the IP (`192.168.68.60`), where Docker gave the hostname. Counting nodes by distinct `Host` still works, as long as every member in a cluster reports the same form.
+   - On macOS, `showOSMetrics()` → `version` is the macOS release (`15.6`), not the kernel (`Darwin 24.6.0`). On Linux it's the kernel string, which is what the RHEL rule reads.
+
+TLS protocol settings were also checked on a throwaway locator, with them set both as `-D` flags and in `gemfire.properties` / `gfsecurity.properties`.
+
+The `Sample:` values in the table and [`sample-output.json`](sample-output.json) come from run 1. `local-docker` and `gemfire-runner` stand in for the Env and cluster_name values given at setup. `server_core`, `partition_core` and `pvu_per_core` stay `null` until their meaning is settled.
 
 Not covered:
-- SSL switched on. `ssl-enabled-components` has only been seen empty.
 - IPv6 addresses.
-- The OS distribution from a real RHEL kernel. Docker runs its own kernel (`6.10.14-linuxkit`), so the sample distribution is `null`. The kernel rule was tested on RHEL 7, 8, 9 and 10 version strings instead.
+- The OS distribution from a real RHEL kernel. Docker runs its own kernel (`6.10.14-linuxkit`) and macOS reports its release, so the distribution was `null` in every run. The kernel rule was tested on RHEL 7, 8, 9 and 10 version strings instead.
+- Members started by the custom startup classes (`ExampleGemFireLocatorStart` / `ExampleGemFireServerStart`). That covers their classpath, and whether their locators appear in `DS.listServers()` because they also run a CacheServer. Geode's source says they will.
 
 ## Notes
 
