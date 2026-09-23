@@ -1,17 +1,18 @@
 {
-  "collected_at": "2026-09-23T15:21:39Z",
-  "env": "local-docker",
+  "collected_at": "2026-09-23T17:24:25Z",
   "cluster": {
+    "env": "local-docker",
     "cluster_name": "gemfire-runner",
-    "distributed_system_id": 42,
+    "locators": [
+      "locator-0"
+    ],
+    "locators_count": 1,
     "servers": [
       "server-0",
       "server-1"
     ],
     "servers_count": 2,
     "nodes": 3,
-    "software_version": "10.3.0",
-    "installation_path": "/gemfire",
     "regions_count": 16,
     "regions": [
       {
@@ -94,16 +95,7 @@
         "region_type": "NORMAL",
         "replication": "neither"
       }
-    ],
-    "encryption": {
-      "ssl_enabled": false,
-      "ssl_enabled_components": []
-    },
-    "tls": {
-      "ssl_protocols": "any",
-      "ssl_client_protocols": null,
-      "ssl_server_protocols": null
-    }
+    ]
   },
   "members": [
     {
@@ -124,7 +116,20 @@
       "server_core": null,
       "partition_core": null,
       "pvu_per_core": null,
-      "uptime_seconds": 3032
+      "uptime_seconds": 2962,
+      "software_version": "10.3.0",
+      "installation_path": "/gemfire",
+      "encryption": {
+        "ssl_enabled": true,
+        "ssl_enabled_components": [
+          "ALL"
+        ]
+      },
+      "tls": {
+        "ssl_protocols": "TLSv1.2,TLSv1.3",
+        "ssl_client_protocols": null,
+        "ssl_server_protocols": null
+      }
     },
     {
       "name": "server-0",
@@ -144,7 +149,20 @@
       "server_core": null,
       "partition_core": null,
       "pvu_per_core": null,
-      "uptime_seconds": 3023
+      "uptime_seconds": 2946,
+      "software_version": "10.3.0",
+      "installation_path": "/gemfire",
+      "encryption": {
+        "ssl_enabled": true,
+        "ssl_enabled_components": [
+          "ALL"
+        ]
+      },
+      "tls": {
+        "ssl_protocols": "TLSv1.2,TLSv1.3",
+        "ssl_client_protocols": null,
+        "ssl_server_protocols": null
+      }
     },
     {
       "name": "server-1",
@@ -164,7 +182,20 @@
       "server_core": null,
       "partition_core": null,
       "pvu_per_core": null,
-      "uptime_seconds": 3023
+      "uptime_seconds": 2946,
+      "software_version": "10.3.0",
+      "installation_path": "/gemfire",
+      "encryption": {
+        "ssl_enabled": true,
+        "ssl_enabled_components": [
+          "ALL"
+        ]
+      },
+      "tls": {
+        "ssl_protocols": "TLSv1.2,TLSv1.3",
+        "ssl_client_protocols": null,
+        "ssl_server_protocols": null
+      }
     }
   ]
 }
