@@ -26,7 +26,7 @@ The collector runs on a locator and writes one report per cluster: when it was c
 |  | PVU per core | `pvu_per_core` | ⚠️ TBD, see [Notes](#notes)<br>Sample: `null` (not collected until the meaning is settled) | **Provided**: IBM's PVU table value for the CPU model. JMX doesn't report the CPU model |
 |  | uptime | `uptime_seconds` | Total Uptime of the Gemfire Locator or Server<br>Sample: native-locator `14` s (just restarted), native-server-0 `62` s, native-server-1 `58` s | **JMX** `Member.MemberUpTime` (seconds) |
 |  | software_version | `software_version` | Example: `10.1.3` (`Tanzu GemFire 10.1.3`)<br>Sample: `10.3.2` on all 3 members | **JMX** `Member.ReleaseVersion` (`10.1.3`). `Member.Version` has the full product string |
-|  | Installation path | `installation_path` | Example: `/opt/middleware/pivotal/gemfire_1013`<br>Sample: `/Users/jeremycastle/dev/vmware-gemfire-10.3.2` on all 3 members | **JMX** `Member.ClassPath`: find GemFire's own jar by name (`gemfire-bootstrap.jar`, `gemfire-dependencies.jar` or `geode-dependencies.jar`) and take the folder above its `lib/`. Matching by name skips other jars that sit in their own `lib/` folders |
+|  | Installation path | `installation_path` | Example: `/opt/middleware/pivotal/gemfire_1013`<br>Sample: `/Users/example/dev/vmware-gemfire-10.3.2` on all 3 members | **JMX** `Member.ClassPath`: find GemFire's own jar by name (`gemfire-bootstrap.jar`, `gemfire-dependencies.jar` or `geode-dependencies.jar`) and take the folder above its `lib/`. Matching by name skips other jars that sit in their own `lib/` folders |
 |  | Encryption | `encryption.ssl_enabled`, `encryption.ssl_enabled_components` | Is SSL Enabled?<br>Sample: `true`, components `["ALL"]` on all 3 members | **JMX** `Member.listGemFireProperties()` → `securableCommunicationChannel` (the `ssl-enabled-components` setting; empty list = no SSL), plus the legacy `clusterSSLEnabled` / `serverSSLEnabled` / `gatewaySSLEnabled` / `jmxManagerSSLEnabled` / `httpServiceSSLEnabled` |
 |  | TLS | `tls.ssl_protocols`, `tls.ssl_client_protocols`, `tls.ssl_server_protocols` | What TLS Protocols are Enabled<br>Sample: `ssl-protocols` = `TLSv1.2 TLSv1.3` on all 3 members (set in `gfsecurity.properties`, which GemFire reports space-separated); client/server protocols not set | **JMX** `processCommand("describe config --member=<name> --hide-defaults=false")` on the manager's `Member` MBean returns JSON. Read `ssl-protocols`, `ssl-client-protocols` and `ssl-server-protocols` from the `api-properties` or `file-properties` section, or from a `-Dgemfire.ssl-…` entry in `jvm-args`. Not set = `any` (JDK default, usually TLSv1.2 + TLSv1.3)<br>Don't use `Member.listGemFireProperties()` → `SSLProtocols`: GemFire never fills it in, so it's always `null` |
 
@@ -40,6 +40,45 @@ The collector runs on a locator and writes one report per cluster: when it was c
   - Use these GemFire MBeans, not `java.lang:*`. Through the locator, the `java.lang:*` MBeans describe only the locator's own JVM.
   - A locator starts its JMX manager only when a gfsh client connects through it, or when `jmx-manager-start=true` is set. Until then the JMX port refuses connections.
 - **Provided**: values given to the job when it's set up.
+
+## Sample collector
+
+`NightlyStatsLocatorStart` starts a locator and, from a background thread inside it, writes the report above to a JSON file every day. It reads the MBeans from the locator's own JVM, so it needs no JMX connection, credentials or keystores.
+
+| File | What it does |
+| --- | --- |
+| `src/main/java/com/example/gemfire/stats/NightlyStatsLocatorStart.java` | Starts the locator with its JMX manager running, schedules the daily run and writes the file |
+| `src/main/java/com/example/gemfire/stats/NightlyStatsCollector.java` | Reads the MBeans and builds the report, following the Source column above |
+| `src/main/java/com/example/gemfire/stats/Json.java` | Minimal JSON reader and writer. GemFire's bundled Jackson differs between 10.1 and 10.3, so it isn't used |
+| `scripts/start-locator.sh` | Runs the locator with GemFire's classpath and JVM flags |
+| `locator.properties.example` | Every setting, with comments |
+
+The `Makefile` wraps the build, running it and a local test cluster. `make` lists every target.
+
+```sh
+export GEMFIRE_HOME=~/dev/vmware-gemfire-10.3.2   # any GemFire install
+make build                                        # build the jar
+cp locator.properties.example locator.properties   # then edit it
+make run                                          # start a locator with the collector (foreground)
+```
+
+To try it out without your own settings, `make test` runs an end-to-end test on this machine and takes about 75 seconds:
+1. It starts a locator with the collector, 2 servers and 3 regions. SSL is on, using a self-signed certificate the Makefile creates.
+2. It waits for the collector's startup run.
+3. It checks the report with `scripts/verify-report.sh`: the same fields as `sample-output.json`, the right members, regions and SSL/TLS values.
+4. It stops the cluster.
+
+Other things you can do:
+- `make test SSL=false` runs the same test without SSL.
+- `make start`, `status`, `report`, `logs` and `stop` drive the test cluster by hand. It uses ports 20334, 21099 and 40504+ (overridable), so it doesn't clash with gemfire-runner. Its files go in `.test-cluster/`.
+
+- Every day at `NIGHTLY_STATS_TIME` (default `02:00`, local time) it writes `<NIGHTLY_STATS_DIR>/<CLUSTER_NAME>-<yyyy-MM-dd>.json`, in the same layout as [`sample-output.json`](sample-output.json). `NIGHTLY_STATS_DIR` defaults to `<LOG_DIRECTORY>/nightly-stats`.
+- `NIGHTLY_STATS_RUN_ON_STARTUP=true` also runs it once, 60 seconds after startup, which is handy for testing.
+- `ENV` and `CLUSTER_NAME` in the properties file are the provided values.
+- Any key starting with `gemfire.` is passed to the locator as a GemFire property, e.g. the SSL settings.
+- Its messages go to the locator's log and contain `Nightly stats`. A failed run is logged, and the next day's run tries again. It never stops the locator.
+- Servers need nothing extra.
+- Not tested: a cluster with a security manager. Inside the JVM, `describe config` could then be refused. If that happens, `tls` is `null` and a warning is logged.
 
 ## Verification
 
@@ -56,6 +95,10 @@ Three test runs on 2026-09-23. Each one read every value through a single JMX co
    - `Member.Host` and the start of `Member.Id` were the IP (`192.168.68.60`), where Docker gave the hostname. Counting nodes by distinct `Host` still works, as long as every member in a cluster reports the same form.
    - On macOS, `showOSMetrics()` → `version` is the macOS release (`15.6`), not the kernel (`Darwin 24.6.0`). On Linux it's the kernel string, which is what the RHEL rule reads.
    - With SSL on, the JMX client checks the locator's certificate against the address the locator advertises for JMX (its IP here). gemfire-runner's certificates don't include the Mac's IP, so the locator was set to advertise `localhost` instead (`jmx-manager-hostname-for-clients=localhost`).
+
+The sample collector was tested the same way as run 3: natively, with SSL on, with `NightlyStatsLocatorStart` running the locator and 2 servers started with gfsh.
+- The startup run and a scheduled run both wrote the file, with the same fields as `sample-output.json`. The scheduled run then set the next run for the same time the following day.
+- TLS was read correctly from the locator's `api-properties`, where the settings passed through its Builder land. Across the runs, TLS has now been read from all three places it can be set: API, properties file and `-D` flag.
 
 TLS protocol settings were also checked on a throwaway locator, with them set both as `-D` flags and in `gemfire.properties` / `gfsecurity.properties`.
 

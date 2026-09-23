@@ -1,0 +1,24 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.example.gemfire'
+version = '0.0.1-SNAPSHOT'
+
+def gemfireHome = System.getenv('GEMFIRE_HOME')
+if (!gemfireHome) {
+    throw new GradleException('GEMFIRE_HOME is not set. Point it at a GemFire install, e.g. export GEMFIRE_HOME=~/dev/vmware-gemfire-10.3.2')
+}
+
+dependencies {
+    // The locator provides GemFire at runtime, so compile against the local install's jars
+    compileOnly fileTree(dir: "${gemfireHome}/lib", include: '*.jar')
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+}
+
+jar {
+    archiveFileName = 'gemfire-nightly-stats.jar'
+}
