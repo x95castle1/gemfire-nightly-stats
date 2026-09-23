@@ -1,0 +1,168 @@
+{
+  "collected_at": "2026-09-23T14:35:26Z",
+  "env": "local-docker",
+  "cluster": {
+    "cluster_name": "gemfire-runner",
+    "distributed_system_id": 42,
+    "servers": [
+      "server-0",
+      "server-1"
+    ],
+    "servers_count": 2,
+    "nodes": 3,
+    "software_version": "10.3.0",
+    "installation_path": "/gemfire",
+    "regions_count": 16,
+    "regions": [
+      {
+        "path": "/Account",
+        "region_type": "PARTITION",
+        "replication": "partition"
+      },
+      {
+        "path": "/Examplegold_Enrollment",
+        "region_type": "PARTITION",
+        "replication": "partition"
+      },
+      {
+        "path": "/Gateway",
+        "region_type": "NORMAL",
+        "replication": "neither"
+      },
+      {
+        "path": "/Hello",
+        "region_type": "NORMAL",
+        "replication": "neither"
+      },
+      {
+        "path": "/MarketPrices",
+        "region_type": "PERSISTENT_PARTITION",
+        "replication": "partition"
+      },
+      {
+        "path": "/RIC_ISIN_EXCHANGE",
+        "region_type": "PERSISTENT_REPLICATE",
+        "replication": "replicate"
+      },
+      {
+        "path": "/TFMT_TM_SDK_CH_PARAMETER",
+        "region_type": "REPLICATE",
+        "replication": "replicate"
+      },
+      {
+        "path": "/Transaction",
+        "region_type": "PARTITION",
+        "replication": "partition"
+      },
+      {
+        "path": "/UsersWithDelta",
+        "region_type": "REPLICATE",
+        "replication": "replicate"
+      },
+      {
+        "path": "/cachedPersistentPartitionRegion",
+        "region_type": "PERSISTENT_PARTITION",
+        "replication": "partition"
+      },
+      {
+        "path": "/nonPooledRegion",
+        "region_type": "NORMAL",
+        "replication": "neither"
+      },
+      {
+        "path": "/persistentPartitionRegion",
+        "region_type": "PERSISTENT_PARTITION",
+        "replication": "partition"
+      },
+      {
+        "path": "/persistentPartitionRegionCutover",
+        "region_type": "PERSISTENT_PARTITION",
+        "replication": "partition"
+      },
+      {
+        "path": "/persistentReplicatedRegion",
+        "region_type": "PERSISTENT_REPLICATE",
+        "replication": "replicate"
+      },
+      {
+        "path": "/persistentReplicatedRegion2",
+        "region_type": "PERSISTENT_REPLICATE",
+        "replication": "replicate"
+      },
+      {
+        "path": "/pooledRegion",
+        "region_type": "NORMAL",
+        "replication": "neither"
+      }
+    ],
+    "encryption": {
+      "ssl_enabled": false,
+      "ssl_enabled_components": []
+    },
+    "tls": {
+      "ssl_protocols": "any"
+    }
+  },
+  "members": [
+    {
+      "name": "locator-0",
+      "type": "locator",
+      "host": "gemfire-locator-0",
+      "os": {
+        "name": "Red Hat Enterprise Linux 10.2 (Coughlan)",
+        "kernel": "Linux 6.10.14-linuxkit aarch64"
+      },
+      "address_family": "IPv4",
+      "memory_bytes": 23316455424,
+      "memory_quotas": {
+        "heap_max_mb": 1024,
+        "off_heap_max_bytes": 0
+      },
+      "available_processors": 12,
+      "server_core": null,
+      "partition_core": null,
+      "pvu_per_core": null,
+      "uptime_seconds": 258
+    },
+    {
+      "name": "server-0",
+      "type": "server",
+      "host": "gemfire-server-0",
+      "os": {
+        "name": "Red Hat Enterprise Linux 10.2 (Coughlan)",
+        "kernel": "Linux 6.10.14-linuxkit aarch64"
+      },
+      "address_family": "IPv4",
+      "memory_bytes": 23316455424,
+      "memory_quotas": {
+        "heap_max_mb": 4096,
+        "off_heap_max_bytes": 1073741824
+      },
+      "available_processors": 12,
+      "server_core": null,
+      "partition_core": null,
+      "pvu_per_core": null,
+      "uptime_seconds": 250
+    },
+    {
+      "name": "server-1",
+      "type": "server",
+      "host": "gemfire-server-1",
+      "os": {
+        "name": "Red Hat Enterprise Linux 10.2 (Coughlan)",
+        "kernel": "Linux 6.10.14-linuxkit aarch64"
+      },
+      "address_family": "IPv4",
+      "memory_bytes": 23316455424,
+      "memory_quotas": {
+        "heap_max_mb": 4096,
+        "off_heap_max_bytes": 1073741824
+      },
+      "available_processors": 12,
+      "server_core": null,
+      "partition_core": null,
+      "pvu_per_core": null,
+      "uptime_seconds": 250
+    }
+  ]
+}
