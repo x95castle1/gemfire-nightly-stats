@@ -1,5 +1,5 @@
 {
-  "collected_at": "2026-09-23T14:35:26Z",
+  "collected_at": "2026-09-23T15:21:39Z",
   "env": "local-docker",
   "cluster": {
     "cluster_name": "gemfire-runner",
@@ -100,7 +100,9 @@
       "ssl_enabled_components": []
     },
     "tls": {
-      "ssl_protocols": "any"
+      "ssl_protocols": "any",
+      "ssl_client_protocols": null,
+      "ssl_server_protocols": null
     }
   },
   "members": [
@@ -109,8 +111,8 @@
       "type": "locator",
       "host": "gemfire-locator-0",
       "os": {
-        "name": "Red Hat Enterprise Linux 10.2 (Coughlan)",
-        "kernel": "Linux 6.10.14-linuxkit aarch64"
+        "kernel": "Linux 6.10.14-linuxkit aarch64",
+        "distribution": null
       },
       "address_family": "IPv4",
       "memory_bytes": 23316455424,
@@ -122,15 +124,15 @@
       "server_core": null,
       "partition_core": null,
       "pvu_per_core": null,
-      "uptime_seconds": 258
+      "uptime_seconds": 3032
     },
     {
       "name": "server-0",
       "type": "server",
       "host": "gemfire-server-0",
       "os": {
-        "name": "Red Hat Enterprise Linux 10.2 (Coughlan)",
-        "kernel": "Linux 6.10.14-linuxkit aarch64"
+        "kernel": "Linux 6.10.14-linuxkit aarch64",
+        "distribution": null
       },
       "address_family": "IPv4",
       "memory_bytes": 23316455424,
@@ -142,15 +144,15 @@
       "server_core": null,
       "partition_core": null,
       "pvu_per_core": null,
-      "uptime_seconds": 250
+      "uptime_seconds": 3023
     },
     {
       "name": "server-1",
       "type": "server",
       "host": "gemfire-server-1",
       "os": {
-        "name": "Red Hat Enterprise Linux 10.2 (Coughlan)",
-        "kernel": "Linux 6.10.14-linuxkit aarch64"
+        "kernel": "Linux 6.10.14-linuxkit aarch64",
+        "distribution": null
       },
       "address_family": "IPv4",
       "memory_bytes": 23316455424,
@@ -162,7 +164,7 @@
       "server_core": null,
       "partition_core": null,
       "pvu_per_core": null,
-      "uptime_seconds": 250
+      "uptime_seconds": 3023
     }
   ]
 }
