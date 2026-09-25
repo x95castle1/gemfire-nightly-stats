@@ -79,8 +79,7 @@ public class NightlyStatsCollector {
         for (String path : paths) {
             ObjectName region = (ObjectName) mbeans.invoke(DISTRIBUTED_SYSTEM, "fetchDistributedRegionObjectName",
                     new Object[] {path}, STRING_SIGNATURE);
-            String regionType = (String) attribute(region, "RegionType");
-            regions.add(map("path", path, "region_type", regionType, "replication", replication(regionType)));
+            regions.add(map("path", path, "region_type", attribute(region, "RegionType")));
         }
 
         Map<String, Object> cluster = map(
@@ -120,9 +119,6 @@ public class NightlyStatsCollector {
                 "memory_quotas", map("heap_max_mb", attribute(member, "MaxMemory"),
                         "off_heap_max_bytes", attribute(member, "OffHeapMaxMemory")),
                 "available_processors", os.get("availableProcessors"),
-                "server_core", null,
-                "partition_core", null,
-                "pvu_per_core", null,
                 "uptime_seconds", attribute(member, "MemberUpTime"),
                 "software_version", attribute(member, "ReleaseVersion"),
                 "installation_path", installationPath((String) attribute(member, "ClassPath")),
@@ -232,13 +228,6 @@ public class NightlyStatsCollector {
             }
         }
         return null;
-    }
-
-    static String replication(String regionType) {
-        if (regionType.contains("REPLICATE")) {
-            return "replicate";
-        }
-        return regionType.contains("PARTITION") ? "partition" : "neither";
     }
 
     private Object attribute(ObjectName name, String attribute) throws Exception {

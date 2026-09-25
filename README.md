@@ -11,19 +11,15 @@ The collector runs on a locator and writes one report per cluster: when it was c
 |  | servers_count | `cluster.servers_count` | Total Count of GemFire Servers<br>Sample: `2` | **JMX** length of `servers` above |
 |  | "nodes" | `cluster.nodes` | Number of distinct hosts running cluster members<br>Sample: `1` (all 3 members run on the same Mac) | **JMX** distinct `Member.Host` values across `DS.listMembers()`. `Host` is the hostname or the IP depending on the setup, but every member of a cluster reports the same form |
 |  | Regions | `cluster.regions_count`, `cluster.regions[].path` | Total Number of Regions<br>Sample: `5` | **JMX** `DS.TotalRegionCount`. Paths come from `DS.listAllRegionPaths()` |
-|  | Region type | `cluster.regions[].region_type` | For each Region what type is it?<br>Sample: `/NativePartition` = `PARTITION`, `/NativePartitionPersistent` = `PERSISTENT_PARTITION`, `/NativeReplicate` = `REPLICATE`, `/NativeReplicatePersistent` = `PERSISTENT_REPLICATE`, `/NativeLocal` = `NORMAL` | **JMX** `Region.RegionType`, the data policy (`PARTITION`, `PERSISTENT_PARTITION`, `REPLICATE`, `PERSISTENT_REPLICATE`, `NORMAL`, …) |
-|  | Replication | `cluster.regions[].replication` | Is each region REPLICATE or PARTITION?<br>Sample: partition ×2, replicate ×2, neither ×1 (`/NativeLocal`) | **JMX** worked out from `Region.RegionType` above: contains `REPLICATE` = replicate, contains `PARTITION` = partition, anything else (`NORMAL`, `EMPTY`, …) = neither |
+|  | Region type | `cluster.regions[].region_type` | For each Region what type is it?<br>Sample: `/NativePartition` = `PARTITION`, `/NativePartitionPersistent` = `PERSISTENT_PARTITION`, `/NativeReplicate` = `REPLICATE`, `/NativeReplicatePersistent` = `PERSISTENT_REPLICATE`, `/NativeLocal` = `NORMAL` | **JMX** `Region.RegionType`, the data policy (`PARTITION`, `PERSISTENT_PARTITION`, `REPLICATE`, `PERSISTENT_REPLICATE`, `NORMAL`, …). The type also shows whether a region is partitioned or replicated |
 | **Each member**<br>(`members[]`) | Member name | `name` | The member's name<br>Sample: `native-locator`, `native-server-0`, `native-server-1` | **JMX** `Member.Name` |
 |  | Type | `type` | GemFire Locator or Server<br>Sample: native-locator = `locator`, native-server-0 / native-server-1 = `server` | **JMX** a member in `DS.listLocatorMembers(false)` is a locator (check this first); otherwise one in `DS.listServers()` is a server |
 |  | Host | `host` | The machine the member runs on<br>Sample: `192.168.68.60` for all 3 members (the IP here; in Docker it was the hostname) | **JMX** `Member.Host` (the hostname or the IP, depending on the setup) |
 |  | OS | `os.kernel`, `os.distribution` | Example: RHEL 8 (`Linux 4.18.0-553.89.1.el8_10.x86_64 amd64`)<br>Sample: `Mac OS X 15.6 aarch64`, distribution `null` (macOS isn't RHEL, and on macOS the version is the macOS release, not the kernel) | **JMX** `Member.showOSMetrics()` → `name` + `version` + `arch` for the kernel string<br>The distribution comes from the kernel version: RHEL kernels carry the release, e.g. `…el8_10…` = RHEL 8.10 (`el7` kernels only carry the major version). Other kernels give no distribution<br>Don't use the `Build-Platform` line in `Member.Version`: that's the machine GemFire was built on |
 |  | Address Family | `address_family` | IPv4 or IPv6 for the host machine<br>Sample: `IPv4` on all 3 members | **JMX** `Member.Version` → the `Running on: <host>/<ip>, …` line: dotted = IPv4, contains `:` = IPv6<br>Don't use `Member.Id`: it can start with the hostname instead of the IP |
 |  | Memory | `memory_bytes` | The host machines memory<br>Sample: `38654705664` bytes (36 GiB) on all 3 members | **JMX** `Member.showOSMetrics()` → `totalPhysicalMemorySize` (bytes, although the javadoc says MB) |
-|  | memory quotas | `memory_quotas.heap_max_mb`, `memory_quotas.off_heap_max_bytes` | The heap allocated to gemfire<br>Sample: native-locator `512` MB heap; native-server-0 / native-server-1 `1024` MB heap; no off-heap | **JMX** `Member.MaxMemory` (MB, the `-Xmx` value). Off-heap, if used: `Member.OffHeapMaxMemory` (bytes) |
+|  | memory quotas | `memory_quotas.heap_max_mb`, `memory_quotas.off_heap_max_bytes` | The configured heap and off-heap memory<br>Sample: native-locator `512` MB heap; native-server-0 / native-server-1 `1024` MB heap; no off-heap | **JMX** `Member.MaxMemory` (MB, the `-Xmx` value). Off-heap, if used: `Member.OffHeapMaxMemory` (bytes) |
 |  | CPU count | `available_processors` | CPUs the member's host reports (the `6 cpu(s)` in the log banner)<br>Sample: `12` on all 3 members | **JMX** `Member.showOSMetrics()` → `availableProcessors` |
-|  | Server core | `server_core` | 6 cores (`6 cpu(s)`). ⚠️ Meaning TBD, see [Notes](#notes)<br>Sample: `null` (not collected until the meaning is settled) | If it means the CPUs the VM sees: same as `available_processors`. If it means the physical server's cores, a VM can't see those: **Provided**, e.g. from vCenter |
-|  | Partition core | `partition_core` | ⚠️ TBD, see [Notes](#notes)<br>Sample: `null` (not collected until the meaning is settled) | If it's the IBM meaning: same as `available_processors` |
-|  | PVU per core | `pvu_per_core` | ⚠️ TBD, see [Notes](#notes)<br>Sample: `null` (not collected until the meaning is settled) | **Provided**: IBM's PVU table value for the CPU model. JMX doesn't report the CPU model |
 |  | uptime | `uptime_seconds` | Total Uptime of the Gemfire Locator or Server<br>Sample: native-locator `14` s (just restarted), native-server-0 `62` s, native-server-1 `58` s | **JMX** `Member.MemberUpTime` (seconds) |
 |  | software_version | `software_version` | Example: `10.1.3` (`Tanzu GemFire 10.1.3`)<br>Sample: `10.3.2` on all 3 members | **JMX** `Member.ReleaseVersion` (`10.1.3`). `Member.Version` has the full product string |
 |  | Installation path | `installation_path` | Example: `/opt/middleware/pivotal/gemfire_1013`<br>Sample: `/Users/example/dev/vmware-gemfire-10.3.2` on all 3 members | **JMX** `Member.ClassPath`: find GemFire's own jar by name (`gemfire-bootstrap.jar`, `gemfire-dependencies.jar` or `geode-dependencies.jar`) and take the folder above its `lib/`. Matching by name skips other jars that sit in their own `lib/` folders |
@@ -102,7 +98,7 @@ The sample collector was tested the same way as run 3: natively, with SSL on, wi
 
 TLS protocol settings were also checked on a throwaway locator, with them set both as `-D` flags and in `gemfire.properties` / `gfsecurity.properties`.
 
-The `Sample:` values in the table and [`sample-output.json`](sample-output.json) come from the run 3 setup restarted with SSL on: a native locator and 2 servers, with `ssl-enabled-components=all` and `ssl-protocols=TLSv1.2,TLSv1.3` in `gfsecurity.properties` files, and five regions of different types. `local-mac` and `native-test` stand in for the Env and cluster_name values given at setup. `server_core`, `partition_core` and `pvu_per_core` stay `null` until their meaning is settled.
+The `Sample:` values in the table and [`sample-output.json`](sample-output.json) come from the run 3 setup restarted with SSL on: a native locator and 2 servers, with `ssl-enabled-components=all` and `ssl-protocols=TLSv1.2,TLSv1.3` in `gfsecurity.properties` files, and five regions of different types. `local-mac` and `native-test` stand in for the Env and cluster_name values given at setup.
 
 Not covered:
 - IPv6 addresses.
@@ -111,10 +107,4 @@ Not covered:
 
 ## Notes
 
-- **Server core / Partition core / PVU per core: ask the template owner.** These look like IBM sub-capacity licensing terms, as used in ILMT reports:
-  - *Server core*: physical cores on the physical server underneath the VM.
-  - *Partition core*: cores assigned to the VM (what GemFire reports as `6 cpu(s)`).
-  - *PVU per core*: IBM's Processor Value Unit rating for the CPU model (e.g. 70).
-
-  If that reading is right, only Partition core comes from GemFire. Server core needs hypervisor (vCenter) inventory, and PVU needs IBM's PVU table.
 - **cluster_name**: GemFire has no cluster-level name. The member name in gfsh `list members` is the same value as JMX `Member.Name`, and it belongs to one process (locator1, server1, …). It only identifies the cluster if your naming convention includes the cluster name.

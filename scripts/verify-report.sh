@@ -40,9 +40,9 @@ check "Env and cluster name came from the properties file" '.cluster.env != null
 check "1 locator" '.cluster.locators_count == 1 and (.cluster.locators | length) == 1'
 check "$SERVERS servers, with locators not counted" ".cluster.servers_count == $SERVERS and (.cluster.servers | length) == $SERVERS"
 check "All members run on this machine, so 1 node" '.cluster.nodes == 1'
-check "The 3 test regions, with the right type and replication" \
-  '[.cluster.regions[] | select(.path | startswith("/Test")) | "\(.path)=\(.region_type)/\(.replication)"] | sort
-   == ["/TestLocal=NORMAL/neither", "/TestPartition=PARTITION/partition", "/TestReplicate=REPLICATE/replicate"]'
+check "The 3 test regions, with the right type" \
+  '[.cluster.regions[] | select(.path | startswith("/Test")) | "\(.path)=\(.region_type)"] | sort
+   == ["/TestLocal=NORMAL", "/TestPartition=PARTITION", "/TestReplicate=REPLICATE"]'
 check "One entry per member, with the right types" \
   "(.members | length) == $((SERVERS + 1))
    and ([.members[] | select(.type == \"locator\")] | length) == 1

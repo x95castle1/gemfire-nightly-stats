@@ -17,28 +17,23 @@
     "regions": [
       {
         "path": "/NativeLocal",
-        "region_type": "NORMAL",
-        "replication": "neither"
+        "region_type": "NORMAL"
       },
       {
         "path": "/NativePartition",
-        "region_type": "PARTITION",
-        "replication": "partition"
+        "region_type": "PARTITION"
       },
       {
         "path": "/NativePartitionPersistent",
-        "region_type": "PERSISTENT_PARTITION",
-        "replication": "partition"
+        "region_type": "PERSISTENT_PARTITION"
       },
       {
         "path": "/NativeReplicate",
-        "region_type": "REPLICATE",
-        "replication": "replicate"
+        "region_type": "REPLICATE"
       },
       {
         "path": "/NativeReplicatePersistent",
-        "region_type": "PERSISTENT_REPLICATE",
-        "replication": "replicate"
+        "region_type": "PERSISTENT_REPLICATE"
       }
     ]
   },
@@ -58,9 +53,6 @@
         "off_heap_max_bytes": 0
       },
       "available_processors": 12,
-      "server_core": null,
-      "partition_core": null,
-      "pvu_per_core": null,
       "uptime_seconds": 14,
       "software_version": "10.3.2",
       "installation_path": "/Users/example/dev/vmware-gemfire-10.3.2",
@@ -91,9 +83,6 @@
         "off_heap_max_bytes": 0
       },
       "available_processors": 12,
-      "server_core": null,
-      "partition_core": null,
-      "pvu_per_core": null,
       "uptime_seconds": 62,
       "software_version": "10.3.2",
       "installation_path": "/Users/example/dev/vmware-gemfire-10.3.2",
@@ -124,9 +113,6 @@
         "off_heap_max_bytes": 0
       },
       "available_processors": 12,
-      "server_core": null,
-      "partition_core": null,
-      "pvu_per_core": null,
       "uptime_seconds": 58,
       "software_version": "10.3.2",
       "installation_path": "/Users/example/dev/vmware-gemfire-10.3.2",
