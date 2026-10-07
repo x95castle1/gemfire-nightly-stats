@@ -19,6 +19,8 @@ dependencies {
     // The locator provides GemFire at runtime, so compile against the local install's jars
     compileOnly fileTree(dir: "${gemfireHome}/lib", include: '*.jar')
 
+    // The collector's classes load GemFire and log4j classes, so tests need the jars at runtime too
+    testImplementation fileTree(dir: "${gemfireHome}/lib", include: '*.jar')
     testImplementation platform('org.junit:junit-bom:5.13.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

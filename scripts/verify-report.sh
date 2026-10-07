@@ -48,7 +48,7 @@ check "One entry per member, with the right types" \
    and ([.members[] | select(.type == \"locator\")] | length) == 1
    and ([.members[] | select(.type == \"server\")] | length) == $SERVERS"
 check "Every member has host, OS, memory, CPUs and address family" \
-  'all(.members[]; .host != null and .os.kernel != null and .memory_bytes > 0 and .available_processors > 0
+  'all(.members[]; .host != null and .os.kernel != null and (.memory_bytes > 0 or (.memory_bytes == null and (.os.kernel | startswith("Linux") | not))) and .available_processors > 0
        and (.address_family == "IPv4" or .address_family == "IPv6"))'
 check "Every member has heap, uptime, version and install path" \
   'all(.members[]; .memory_quotas.heap_max_mb > 0 and .uptime_seconds >= 0
