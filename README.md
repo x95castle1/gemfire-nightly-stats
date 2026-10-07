@@ -50,7 +50,11 @@ The collector runs on a locator and writes one report per cluster: when it was c
 | `src/main/java/com/example/gemfire/stats/NightlyStatsLocatorStart.java` | Starts the locator with its JMX manager running, schedules the daily run and writes the file |
 | `src/main/java/com/example/gemfire/stats/NightlyStatsCollector.java` | Reads the MBeans and builds the report, following the Source column above |
 | `src/main/java/com/example/gemfire/stats/Json.java` | Minimal JSON reader and writer. GemFire's bundled Jackson differs between 10.1 and 10.3, so it isn't used |
+| `src/main/java/com/example/gemfire/stats/S3ReportUploader.java` | Sends JSON through the S3 API with bounded retries and SHA-256 checksums |
+| `src/main/java/com/example/gemfire/stats/ReportDelivery.java` | Retries saved reports and records successful delivery by destination and content hash |
+| `src/main/java/com/example/gemfire/stats/UploadReports.java` | Command-line recovery and verification of uploaded reports |
 | `scripts/start-locator.sh` | Runs the locator with GemFire's classpath and JVM flags |
+| `compose.yaml` | Runs a local SeaweedFS S3 store with a persistent volume |
 | `locator.properties.example` | Every setting, with comments |
 
 The `Makefile` wraps the build, running it and a local test cluster. `make` lists every target.
@@ -72,13 +76,82 @@ Other things you can do:
 - `make test SSL=false` runs the same test without SSL.
 - `make start`, `status`, `report`, `logs` and `stop` drive the test cluster by hand. It uses ports 20334, 21099 and 40504+ (overridable), so it doesn't clash with gemfire-runner. Its files go in `.test-cluster/`.
 
-- Every day at `NIGHTLY_STATS_TIME` (default `02:00`, local time) it writes `<NIGHTLY_STATS_DIR>/<CLUSTER_NAME>-<yyyy-MM-dd>.json`, in the same layout as [`sample-output.json`](sample-output.json). `NIGHTLY_STATS_DIR` defaults to `<LOG_DIRECTORY>/nightly-stats`.
+- Every day at `NIGHTLY_STATS_TIME` (default `02:00`) in `NIGHTLY_STATS_TIMEZONE` (default `America/Chicago`), it writes `<NIGHTLY_STATS_DIR>/<CLUSTER_NAME>-<yyyy-MM-dd>.json`, in the same layout as [`sample-output.json`](sample-output.json). The filename uses the same timezone as the schedule. `NIGHTLY_STATS_DIR` defaults to `<LOG_DIRECTORY>/nightly-stats`.
+- When spring daylight saving time skips `02:00`, that day's run moves to `03:00`; the following day returns to `02:00`. A time inside the repeated fall hour uses the first occurrence and runs once that day.
 - `NIGHTLY_STATS_RUN_ON_STARTUP=true` also runs it once, 60 seconds after startup, which is handy for testing.
 - `ENV` and `CLUSTER_NAME` in the properties file are the provided values.
 - Any key starting with `gemfire.` is passed to the locator as a GemFire property, e.g. the SSL settings.
 - Its messages go to the locator's log and contain `Nightly stats`. A failed run is logged, and the next day's run tries again. It never stops the locator.
 - Servers need nothing extra.
 - Not tested: a cluster with a security manager. Inside the JVM, `describe config` could then be refused. If that happens, `tls` is `null` and a warning is logged.
+
+## Local S3 storage with SeaweedFS
+
+GemFire runs on the host. Docker Compose runs one [SeaweedFS](https://github.com/seaweedfs/seaweedfs#quick-start) container, pinned to `chrislusf/seaweedfs:4.48`, using its `mini` mode. The S3 API is published on `http://localhost:8333` and the Admin UI on `http://localhost:23646`, both bound to loopback. Data and metadata live in the `seaweedfs-data` named volume.
+
+```sh
+cp .env.example .env                     # edit the example passwords in .env
+make storage-up                         # wait for the S3 readiness check
+make storage-console                    # open the Admin UI in your browser
+set -a; source .env; set +a              # export the same credentials for the host JVM
+cp locator.properties.example locator.properties
+```
+
+Edit `locator.properties` for your cluster and set `NIGHTLY_STATS_S3_ENABLED=true`, then run `make run`. You can also set `NIGHTLY_STATS_RUN_ON_STARTUP=true` to collect and upload after the initial 60-second delay. The collector's environment must include `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; `AWS_SESSION_TOKEN` is also honored for S3 services that use temporary credentials. `.env` is ignored by Git. Compose and the storage targets read it; export it before starting the host collector. Keep `.env` compatible with both Compose and Bash, and single-quote values containing shell special characters.
+
+SeaweedFS automatically creates the bucket named by `NIGHTLY_STATS_S3_BUCKET` in `.env` (default `gemfire-nightly-stats`). Run `make storage-console` to open the Admin UI, using `SEAWEEDFS_ADMIN_PORT` from `.env` (default `23646`), then log in using `WEED_ADMIN_USER` and `WEED_ADMIN_PASSWORD` from `.env` to browse storage. The target honors an exported port or command-line override and supports `STORAGE_ENV_FILE` for a different environment file. `make storage-logs` follows the container logs; `make storage-down` stops it and preserves its volume.
+
+| Collector property | Default | Purpose |
+| --- | --- | --- |
+| `NIGHTLY_STATS_TIME` | `02:00` | Daily collection time |
+| `NIGHTLY_STATS_TIMEZONE` | `America/Chicago` | IANA timezone used for scheduling and filenames |
+| `NIGHTLY_STATS_S3_ENABLED` | `false` | Enable upload of completed local reports |
+| `NIGHTLY_STATS_S3_ENDPOINT` | `http://localhost:8333` | S3 endpoint; accepts HTTP or HTTPS |
+| `NIGHTLY_STATS_S3_REGION` | `us-east-1` | Signing region |
+| `NIGHTLY_STATS_S3_BUCKET` | `gemfire-nightly-stats` | Destination bucket |
+
+The properties file controls the collector's endpoint, region, and bucket. Changing the Compose port or bucket in `.env` requires updating the matching collector property. `ENV` and `CLUSTER_NAME` must start with a letter or number and contain only letters, numbers, dots, underscores, and hyphens when uploads are enabled.
+
+Reports are uploaded as `application/json`, with a SHA-256 checksum and metadata, under:
+
+```text
+s3://gemfire-nightly-stats/<ENV>/<CLUSTER_NAME>/<yyyy>/<MM>/<dd>/<CLUSTER_NAME>-<yyyy-MM-dd>.json
+```
+
+For example, `local/sample-cluster/2026/10/07/sample-cluster-2026-10-07.json`. A same-day rerun replaces that day's report locally and in storage. The UTC `collected_at` field and the JSON schema stay the same.
+
+After the atomic local write completes, delivery checks saved reports from newest to oldest. Successful uploads write an atomic receipt in `<NIGHTLY_STATS_DIR>/.uploaded/`. Receipts include the endpoint, region, bucket, object key, and file hash, so unchanged reports are skipped and changed reports or destinations are uploaded again. At most 32 reports are uploaded per pass; further pending reports wait for the next pass. Only completed daily JSON files for this cluster are considered; temporary files and symbolic links are ignored.
+
+Transient S3 errors get up to three attempts, within a 60-second total API timeout. Authentication errors are not retried immediately. A failed upload stops that batch, logs a separate `Nightly stats upload failed` message, and leaves every local report available for recovery. Delivery retries on each locator startup, including when startup collection is disabled, and after every nightly collection attempt. Storage failures never stop the locator. The host and Docker must be running for scheduled delivery; missed collections are not reconstructed.
+
+For immediate recovery after restoring storage:
+
+```sh
+set -a; source .env; set +a
+make upload PROPERTIES=locator.properties
+# Upload pending reports and compare the newest report byte-for-byte with storage:
+bash scripts/upload-reports.sh locator.properties --verify
+```
+
+Keep local reports and receipts until you decide on a retention policy. If the bucket's contents are deliberately removed, remove the corresponding local receipts before retrying to repopulate it. `make clean` removes the test cluster and build output; the SeaweedFS volume is managed separately.
+
+The build packages the S3 SDK and its runtime dependencies under private package names inside `gemfire-nightly-stats.jar`, avoiding conflicts with GemFire's libraries. Credentials come only from the environment. The local `.env.example` also points the SDK's profile files to `/dev/null`, keeping local runs independent of workstation AWS configuration.
+
+## Upload validation
+
+```sh
+./gradlew test               # scheduling/DST, receipts/recovery, signed HTTP uploads and retry limits
+make test                   # existing native GemFire test, with uploads disabled
+make test-upload            # SeaweedFS + native GemFire, SSL on, verify the uploaded JSON bytes
+```
+
+`make test-upload` reads the local `.env`, starts SeaweedFS, then starts the test locator and two servers. It waits for the locator's own upload receipt before comparing the stored JSON with the local report. The GemFire test cluster stops afterwards; SeaweedFS stays up so you can browse the bucket. `SSL=false` can be supplied to either end-to-end target. Tests require Java 17, `GEMFIRE_HOME`, `jq`, and, for uploads, Docker Compose. Registry access to the pinned SeaweedFS image is required, or the same image must already be available locally.
+
+Verified on 2026-10-07 with macOS/ARM64, Java 17.0.20, GemFire 10.2.1, and SeaweedFS 4.48:
+- All 17 JVM tests passed, covering DST scheduling, persisted receipts, same-day replacement, changed destinations, pending batches, signed JSON uploads, checksums, and retry limits.
+- `make test` and `make test-upload` passed with SSL enabled, in an isolated test directory on locator/JMX/server ports 22334/22099/42504+. The locator uploaded its own report, and the stored bytes matched the local JSON.
+- After `docker compose down` followed by `up`, the original stored report still matched the local file, without a new upload.
+- With storage down, a separate locator logged the upload failure, kept its saved report pending, and continued listening on its JMX port. After storage was restored, restarting that locator with `NIGHTLY_STATS_RUN_ON_STARTUP=false` uploaded the saved report; its stored bytes matched as well.
 
 ## Verification
 

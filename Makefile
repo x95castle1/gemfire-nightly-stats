@@ -14,6 +14,8 @@ SERVER_PORT_BASE ?= 40504
 TEST_ENV ?= local
 TEST_CLUSTER_NAME ?= test-cluster
 TEST_DIR ?= $(CURDIR)/.test-cluster
+UPLOAD ?= false
+STORAGE_ENV_FILE ?= .env
 # Properties file for `make run`
 PROPERTIES ?= locator.properties
 
@@ -70,7 +72,55 @@ test: ## End-to-end test: start the test cluster, wait for the collector's start
 	@$(MAKE) --no-print-directory start
 	@echo "Waiting for the collector's startup run (about 60 seconds after the locator started)..."
 	@for i in $$(seq 1 120); do ls $(REPORT_DIR)/*.json >/dev/null 2>&1 && break; sleep 1; done
-	@status=0; $(MAKE) --no-print-directory verify || status=$$?; $(MAKE) --no-print-directory stop; exit $$status
+	@status=0; $(MAKE) --no-print-directory verify || status=$$?; \
+	if [ "$(UPLOAD)" = true ] && [ "$$status" -eq 0 ]; then \
+	  $(MAKE) --no-print-directory verify-upload || status=$$?; \
+	fi; \
+	$(MAKE) --no-print-directory stop; exit $$status
+
+.PHONY: storage-up
+storage-up: ## Start SeaweedFS and wait for its S3 endpoint (requires .env)
+	@test -f "$(STORAGE_ENV_FILE)" || { echo "Copy .env.example to $(STORAGE_ENV_FILE) and set your local credentials."; exit 1; }
+	docker compose --env-file "$(STORAGE_ENV_FILE)" up -d --wait --wait-timeout 120 seaweedfs
+
+.PHONY: storage-down
+storage-down: ## Stop SeaweedFS; preserve its data volume
+	docker compose --env-file "$(STORAGE_ENV_FILE)" down
+
+.PHONY: storage-logs
+storage-logs: ## Follow SeaweedFS logs
+	docker compose --env-file "$(STORAGE_ENV_FILE)" logs -f seaweedfs
+
+.PHONY: storage-console
+storage-console: ## Open the SeaweedFS Admin UI in your browser
+	@console_port="$${SEAWEEDFS_ADMIN_PORT:-}"; \
+	if [ -f "$(STORAGE_ENV_FILE)" ]; then source "$(STORAGE_ENV_FILE)" || exit $$?; fi; \
+	url="http://localhost:$${console_port:-$${SEAWEEDFS_ADMIN_PORT:-23646}}"; \
+	if command -v open >/dev/null 2>&1; then \
+	  open "$$url"; \
+	elif command -v xdg-open >/dev/null 2>&1; then \
+	  xdg-open "$$url"; \
+	else \
+	  echo "Open $$url in your browser."; \
+	fi
+
+.PHONY: upload
+upload: build ## Retry pending reports from PROPERTIES (credentials must be exported)
+	@bash scripts/upload-reports.sh "$(PROPERTIES)"
+
+.PHONY: test-upload
+test-upload: storage-up ## End-to-end GemFire collection and upload, using local .env credentials
+	@set -a; source "$(STORAGE_ENV_FILE)"; set +a; \
+	$(MAKE) --no-print-directory test UPLOAD=true
+
+.PHONY: verify-upload
+verify-upload: ## Wait for the locator's upload receipt and compare stored JSON with the local report
+	@file=$$(ls -t "$(REPORT_DIR)"/*.json 2>/dev/null | head -1); \
+	[ -n "$$file" ] || { echo "✘ No report to verify"; exit 1; }; \
+	receipt="$(REPORT_DIR)/.uploaded/$$(basename "$$file").receipt"; \
+	for i in $$(seq 1 90); do [ -f "$$receipt" ] && break; sleep 1; done; \
+	[ -f "$$receipt" ] || { echo "✘ Locator didn't upload the report. See $(LOCATOR_DIR)/test-locator.log"; exit 1; }; \
+	bash scripts/upload-reports.sh "$(TEST_DIR)/locator.properties" --verify
 
 .PHONY: start
 start: start-locator start-servers create-regions ## Start the test cluster: the collector's locator, servers and 3 regions
@@ -151,6 +201,11 @@ test-config: $(if $(ssl_on),certs)
 	  echo "JMX_MANAGER_PORT=$(JMX_PORT)"; \
 	  echo "LOG_DIRECTORY=$(LOCATOR_DIR)"; \
 	  echo "NIGHTLY_STATS_RUN_ON_STARTUP=true"; \
+	  echo "NIGHTLY_STATS_TIMEZONE=America/Chicago"; \
+	  echo "NIGHTLY_STATS_S3_ENABLED=$(UPLOAD)"; \
+	  echo "NIGHTLY_STATS_S3_ENDPOINT=$${NIGHTLY_STATS_S3_ENDPOINT:-http://localhost:$${SEAWEEDFS_S3_PORT:-8333}}"; \
+	  echo "NIGHTLY_STATS_S3_REGION=$${NIGHTLY_STATS_S3_REGION:-us-east-1}"; \
+	  echo "NIGHTLY_STATS_S3_BUCKET=$${NIGHTLY_STATS_S3_BUCKET:-gemfire-nightly-stats}"; \
 	  echo "gemfire.http-service-port=0"; \
 	  if [ -n "$(ssl_on)" ]; then echo "$$SSL_PROPERTIES" | sed 's/^/gemfire./'; fi; \
 	} > $(TEST_DIR)/locator.properties

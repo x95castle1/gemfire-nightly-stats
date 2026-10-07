@@ -1,5 +1,6 @@
 plugins {
     id 'java'
+    id 'com.gradleup.shadow' version '9.2.2'
 }
 
 group = 'com.example.gemfire'
@@ -10,9 +11,27 @@ if (!gemfireHome) {
     throw new GradleException('GEMFIRE_HOME is not set. Point it at a GemFire install, e.g. export GEMFIRE_HOME=~/dev/vmware-gemfire-10.3.2')
 }
 
+repositories {
+    mavenCentral()
+}
+
 dependencies {
     // The locator provides GemFire at runtime, so compile against the local install's jars
     compileOnly fileTree(dir: "${gemfireHome}/lib", include: '*.jar')
+    implementation platform('software.amazon.awssdk:bom:2.55.12')
+    implementation('software.amazon.awssdk:s3') {
+        exclude group: 'software.amazon.awssdk', module: 'apache-client'
+        exclude group: 'software.amazon.awssdk', module: 'apache5-client'
+        exclude group: 'software.amazon.awssdk', module: 'netty-nio-client'
+    }
+    implementation 'software.amazon.awssdk:url-connection-client'
+    runtimeOnly 'org.slf4j:slf4j-nop:2.0.17'
+
+    testImplementation platform('org.junit:junit-bom:5.12.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly fileTree(dir: "${gemfireHome}/lib",
+            include: ['gemfire-core-*.jar', 'log4j-api-*.jar', 'log4j-core-*.jar'])
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -20,5 +39,23 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 jar {
+    archiveFileName = 'gemfire-nightly-stats-plain.jar'
+}
+
+shadowJar {
     archiveFileName = 'gemfire-nightly-stats.jar'
+    // GemFire supplies its own libraries. Keep the SDK and its dependencies private.
+    relocate 'software.amazon', 'com.example.gemfire.stats.internal.amazon'
+    relocate 'org.slf4j', 'com.example.gemfire.stats.internal.slf4j'
+    relocate 'org.reactivestreams', 'com.example.gemfire.stats.internal.reactivestreams'
+    mergeServiceFiles()
+}
+
+build.dependsOn shadowJar
+
+test {
+    useJUnitPlatform()
+    // Keep the test JVM independent of workstation AWS configuration.
+    systemProperty 'aws.configFile', file('build/tmp/test-aws-config').absolutePath
+    systemProperty 'aws.sharedCredentialsFile', file('build/tmp/test-aws-credentials').absolutePath
 }

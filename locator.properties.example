@@ -18,10 +18,21 @@ JMX_MANAGER_PORT=1099
 # Nightly stats
 # Where the daily JSON files go. Default: <LOG_DIRECTORY>/nightly-stats
 # NIGHTLY_STATS_DIR=
-# Local time of the daily run, HH:mm
+# Time of the daily run, HH:mm, in NIGHTLY_STATS_TIMEZONE
 NIGHTLY_STATS_TIME=02:00
+NIGHTLY_STATS_TIMEZONE=America/Chicago
 # Also run once, 60 seconds after startup (handy for testing)
 NIGHTLY_STATS_RUN_ON_STARTUP=false
+
+# Optional S3 upload, after saving the local report. SeaweedFS runs via `make storage-up`.
+# Credentials come from AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the locator's environment.
+# Copy .env.example to .env, edit it, then: set -a; source .env; set +a
+NIGHTLY_STATS_S3_ENABLED=false
+NIGHTLY_STATS_S3_ENDPOINT=http://localhost:8333
+NIGHTLY_STATS_S3_REGION=us-east-1
+NIGHTLY_STATS_S3_BUCKET=gemfire-nightly-stats
+# Object: <ENV>/<CLUSTER_NAME>/<yyyy>/<MM>/<dd>/<CLUSTER_NAME>-<yyyy-MM-dd>.json
+# Same-day reruns overwrite the day's object. Saved pending reports retry at startup and nightly.
 
 # Any other GemFire property can be passed with a "gemfire." prefix. For example, SSL:
 # gemfire.ssl-enabled-components=all

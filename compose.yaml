@@ -1,0 +1,32 @@
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    command:
+      - mini
+      - -dir=/data
+      - -ip=seaweedfs
+      - -ip.bind=0.0.0.0
+      - -webdav=false
+      - -master.telemetry=false
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID in .env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Set AWS_SECRET_ACCESS_KEY in .env}
+      S3_BUCKET: ${NIGHTLY_STATS_S3_BUCKET:-gemfire-nightly-stats}
+      WEED_ADMIN_USER: ${WEED_ADMIN_USER:-admin}
+      WEED_ADMIN_PASSWORD: ${WEED_ADMIN_PASSWORD:?Set WEED_ADMIN_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${SEAWEEDFS_S3_PORT:-8333}:8333"
+      - "127.0.0.1:${SEAWEEDFS_ADMIN_PORT:-23646}:23646"
+    volumes:
+      - seaweedfs-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 18
+      start_period: 15s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+volumes:
+  seaweedfs-data:

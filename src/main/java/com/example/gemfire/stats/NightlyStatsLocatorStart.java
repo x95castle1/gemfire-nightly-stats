@@ -11,6 +11,7 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Properties;
 import java.util.concurrent.Executors;
@@ -36,19 +37,23 @@ public class NightlyStatsLocatorStart {
     private static final Duration STARTUP_RUN_DELAY = Duration.ofSeconds(60);
 
     private final Properties properties;
+    private final StatsProperties statsProperties;
     private final String env;
     private final String clusterName;
     private final Path workingDirectory;
     private final Path outputDirectory;
     private final LocalTime runAt;
+    private final ZoneId timezone;
 
     public NightlyStatsLocatorStart(Properties properties) {
         this.properties = properties;
+        this.statsProperties = new StatsProperties(properties);
         this.env = required("ENV");
         this.clusterName = required("CLUSTER_NAME");
         this.workingDirectory = Paths.get(required("LOG_DIRECTORY"));
         this.outputDirectory = Paths.get(get("NIGHTLY_STATS_DIR", workingDirectory.resolve("nightly-stats").toString()));
         this.runAt = LocalTime.parse(get("NIGHTLY_STATS_TIME", "02:00"));
+        this.timezone = ZoneId.of(get("NIGHTLY_STATS_TIMEZONE", "America/Chicago"));
     }
 
     public static void main(String... args) throws IOException {
@@ -103,6 +108,8 @@ public class NightlyStatsLocatorStart {
             thread.setDaemon(true);
             return thread;
         });
+        // Retry saved files on every startup, even when startup collection is disabled.
+        scheduler.execute(this::uploadPending);
         if (Boolean.parseBoolean(get("NIGHTLY_STATS_RUN_ON_STARTUP", "false"))) {
             // Give servers time to join before the first run
             scheduler.schedule(this::writeReport, STARTUP_RUN_DELAY.toSeconds(), TimeUnit.SECONDS);
@@ -112,7 +119,7 @@ public class NightlyStatsLocatorStart {
 
     /** Reschedules after every run so each delay is recalculated, which keeps the time right across DST changes. */
     private void scheduleNextRun(ScheduledExecutorService scheduler) {
-        ZonedDateTime now = ZonedDateTime.now();
+        ZonedDateTime now = ZonedDateTime.now(timezone);
         ZonedDateTime next = nextRun(now, runAt);
         logger.info("Next nightly stats run at {}", next);
         scheduler.schedule(() -> {
@@ -125,8 +132,9 @@ public class NightlyStatsLocatorStart {
     }
 
     static ZonedDateTime nextRun(ZonedDateTime now, LocalTime runAt) {
-        ZonedDateTime next = now.with(runAt);
-        return next.isAfter(now) ? next : next.plusDays(1);
+        ZonedDateTime next = now.toLocalDate().atTime(runAt).atZone(now.getZone());
+        // Resolve each date separately: a spring DST adjustment must not change tomorrow's time.
+        return next.isAfter(now) ? next : now.toLocalDate().plusDays(1).atTime(runAt).atZone(now.getZone());
     }
 
     private void writeReport() {
@@ -136,7 +144,7 @@ public class NightlyStatsLocatorStart {
             String report = Json.write(collector.collect());
 
             Files.createDirectories(outputDirectory);
-            Path file = outputDirectory.resolve(clusterName + "-" + LocalDate.now() + ".json");
+            Path file = outputDirectory.resolve(clusterName + "-" + LocalDate.now(timezone) + ".json");
             Path temporary = outputDirectory.resolve(file.getFileName() + ".tmp");
             Files.writeString(temporary, report);
             Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -144,23 +152,29 @@ public class NightlyStatsLocatorStart {
         } catch (Exception e) {
             // Never let a failed collection affect the locator; the next run tries again
             logger.error("Nightly stats collection failed", e);
+        } finally {
+            // Previously saved reports still need delivery if today's collection failed.
+            uploadPending();
+        }
+    }
+
+    private void uploadPending() {
+        if (!statsProperties.uploadEnabled()) {
+            return;
+        }
+        try (S3ReportUploader uploader = new S3ReportUploader(statsProperties)) {
+            new ReportDelivery(statsProperties, uploader.destination(), uploader::upload).uploadPending();
+        } catch (Exception e) {
+            logger.error("Nightly stats upload failed; local reports retained for the next retry", e);
         }
     }
 
     private String required(String key) {
-        String value = get(key, null);
-        if (value == null) {
-            throw new IllegalArgumentException("Missing required property " + key);
-        }
-        return value;
+        return statsProperties.required(key);
     }
 
     /** Trims the value and strips double quotes, which startup property files often wrap values in. */
     private String get(String key, String defaultValue) {
-        String value = properties.getProperty(key);
-        if (value == null || value.replace("\"", "").isBlank()) {
-            return defaultValue;
-        }
-        return value.replace("\"", "").trim();
+        return statsProperties.get(key, defaultValue);
     }
 }
