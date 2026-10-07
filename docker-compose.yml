@@ -1,0 +1,42 @@
+# Local S3 (SeaweedFS) for the nightly stats upload. Start it with:
+#   docker compose up -d
+# S3 API: http://localhost:8333, keys in seaweedfs/s3.json (local dev only).
+# SEAWEEDFS_IMAGE overrides the image, e.g. to pull it through a registry mirror.
+
+services:
+  seaweedfs:
+    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:4.48}
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json -master.telemetry=false
+    ports:
+      - "${S3_PORT:-8333}:8333"
+      # Web UIs, localhost only: they have no login, and the filer UI can upload and delete files
+      - "127.0.0.1:${FILER_UI_PORT:-8888}:8888"   # file browser, buckets are under /buckets/
+      - "127.0.0.1:${MASTER_UI_PORT:-9333}:9333"  # cluster and volume status
+    volumes:
+      - seaweedfs-data:/data
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      # 127.0.0.1, not localhost: inside the container localhost resolves to IPv6, which SeaweedFS doesn't listen on
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8333/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # Creates the bucket once SeaweedFS is up. Safe to rerun: an existing bucket is left alone.
+  create-bucket:
+    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:4.48}
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 | grep -qw "${S3_BUCKET:-gemfire-stats}"; then
+          echo "Bucket ${S3_BUCKET:-gemfire-stats} already exists"
+        else
+          echo "s3.bucket.create -name ${S3_BUCKET:-gemfire-stats}" | weed shell -master=seaweedfs:9333
+        fi
+    restart: "no"
+
+volumes:
+  seaweedfs-data:

@@ -14,6 +14,12 @@ SERVER_PORT_BASE ?= 40504
 TEST_ENV ?= local
 TEST_CLUSTER_NAME ?= test-cluster
 TEST_DIR ?= $(CURDIR)/.test-cluster
+# S3=true also uploads the test cluster's report to the local SeaweedFS (docker-compose.yml) and checks it
+S3 ?= false
+S3_ENDPOINT ?= http://localhost:8333
+S3_BUCKET ?= gemfire-stats
+S3_ACCESS_KEY ?= nightly-stats-dev
+S3_SECRET_KEY ?= nightly-stats-dev-secret
 # Properties file for `make run`
 PROPERTIES ?= locator.properties
 
@@ -24,6 +30,7 @@ CERTS_DIR = $(TEST_DIR)/certs
 SECURITY_FILE = $(TEST_DIR)/gfsecurity.properties
 CERT_PASSWORD = changeit
 ssl_on = $(filter true,$(SSL))
+s3_on = $(filter true,$(S3))
 CONNECT = connect --locator=localhost[$(LOCATOR_PORT)] $(if $(ssl_on),--use-ssl --security-properties-file=$(SECURITY_FILE))
 # Succeeds if something is listening on the port
 port_open = (exec 3<>/dev/tcp/127.0.0.1/$(1)) 2>/dev/null
@@ -43,10 +50,10 @@ export SSL_PROPERTIES
 
 .PHONY: help
 help: ## List the targets
-	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-15s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-15s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Test cluster settings (override with make <target> NAME=value):"
-	@echo "  SSL=$(SSL) SERVER_COUNT=$(SERVER_COUNT) LOCATOR_PORT=$(LOCATOR_PORT) JMX_PORT=$(JMX_PORT) SERVER_PORT_BASE=$(SERVER_PORT_BASE)"
+	@echo "  SSL=$(SSL) S3=$(S3) SERVER_COUNT=$(SERVER_COUNT) LOCATOR_PORT=$(LOCATOR_PORT) JMX_PORT=$(JMX_PORT) SERVER_PORT_BASE=$(SERVER_PORT_BASE)"
 
 .PHONY: check-env
 check-env:
@@ -67,10 +74,11 @@ run: build ## Run a locator with the collector in the foreground, from PROPERTIE
 test: ## End-to-end test: start the test cluster, wait for the collector's startup run, check the report, stop
 	@$(MAKE) --no-print-directory stop >/dev/null
 	@rm -rf $(REPORT_DIR)
+	@$(if $(s3_on),$(MAKE) --no-print-directory s3-up)
 	@$(MAKE) --no-print-directory start
 	@echo "Waiting for the collector's startup run (about 60 seconds after the locator started)..."
 	@for i in $$(seq 1 120); do ls $(REPORT_DIR)/*.json >/dev/null 2>&1 && break; sleep 1; done
-	@status=0; $(MAKE) --no-print-directory verify || status=$$?; $(MAKE) --no-print-directory stop; exit $$status
+	@status=0; $(MAKE) --no-print-directory verify $(if $(s3_on),verify-upload) || status=$$?; $(MAKE) --no-print-directory stop; exit $$status
 
 .PHONY: start
 start: start-locator start-servers create-regions ## Start the test cluster: the collector's locator, servers and 3 regions
@@ -129,6 +137,33 @@ report: ## Show the newest report the test cluster wrote
 verify: ## Check the newest report against sample-output.json and the test cluster
 	@scripts/verify-report.sh "$$(ls -t $(REPORT_DIR)/*.json 2>/dev/null | head -1)" $(SERVER_COUNT) $(SSL)
 
+.PHONY: verify-upload
+verify-upload: ## Check the newest report was uploaded to the local SeaweedFS unchanged
+	@scripts/verify-upload.sh "$$(ls -t $(REPORT_DIR)/*.json 2>/dev/null | head -1)" \
+	  "$(S3_ENDPOINT)/$(S3_BUCKET)/nightly-stats/$(TEST_ENV)/$(TEST_CLUSTER_NAME)" "$(S3_ACCESS_KEY):$(S3_SECRET_KEY)"
+
+.PHONY: s3-up
+s3-up: ## Start the local SeaweedFS S3 store and create its bucket (docker-compose.yml)
+	@S3_BUCKET=$(S3_BUCKET) docker compose up -d --wait seaweedfs >/dev/null
+	@S3_BUCKET=$(S3_BUCKET) docker compose run --rm create-bucket | tail -1
+	@echo "✓ SeaweedFS is up. S3 API: $(S3_ENDPOINT), file browser: http://localhost:8888/buckets/$(S3_BUCKET)/"
+
+.PHONY: s3-down
+s3-down: ## Stop the local SeaweedFS (keeps its data; docker compose down -v deletes it)
+	@docker compose down
+	@echo "✓ SeaweedFS stopped"
+
+.PHONY: s3-ls
+s3-ls: ## List what's in the local SeaweedFS bucket
+	@set -o pipefail; curl -sf --aws-sigv4 "aws:amz:us-east-1:s3" --user "$(S3_ACCESS_KEY):$(S3_SECRET_KEY)" \
+	  "$(S3_ENDPOINT)/$(S3_BUCKET)/?list-type=2" \
+	  | awk 'BEGIN { RS = "<Contents>" } NR > 1 { \
+	      key = $$0; sub(/.*<Key>/, "", key); sub(/<.*/, "", key); \
+	      size = $$0; sub(/.*<Size>/, "", size); sub(/<.*/, "", size); \
+	      modified = $$0; sub(/.*<LastModified>/, "", modified); sub(/<.*/, "", modified); \
+	      printf "%s  %8s  %s\n", modified, size, key }' \
+	  || echo "✘ Couldn't list $(S3_BUCKET) at $(S3_ENDPOINT). Is SeaweedFS up (make s3-up)?"
+
 .PHONY: logs
 logs: ## Follow the test cluster's locator log
 	@tail -f $(LOCATOR_DIR)/test-locator.log
@@ -152,6 +187,10 @@ test-config: $(if $(ssl_on),certs)
 	  echo "LOG_DIRECTORY=$(LOCATOR_DIR)"; \
 	  echo "NIGHTLY_STATS_RUN_ON_STARTUP=true"; \
 	  echo "gemfire.http-service-port=0"; \
+	  if [ -n "$(s3_on)" ]; then \
+	    echo "S3_ENDPOINT=$(S3_ENDPOINT)"; echo "S3_BUCKET=$(S3_BUCKET)"; \
+	    echo "S3_ACCESS_KEY=$(S3_ACCESS_KEY)"; echo "S3_SECRET_KEY=$(S3_SECRET_KEY)"; \
+	  fi; \
 	  if [ -n "$(ssl_on)" ]; then echo "$$SSL_PROPERTIES" | sed 's/^/gemfire./'; fi; \
 	} > $(TEST_DIR)/locator.properties
 	@if [ -n "$(ssl_on)" ]; then echo "$$SSL_PROPERTIES" > $(SECURITY_FILE); fi

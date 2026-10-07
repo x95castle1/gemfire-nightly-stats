@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "nightly-stats",
+      "credentials": [
+        {
+          "accessKey": "nightly-stats-dev",
+          "secretKey": "nightly-stats-dev-secret"
+        }
+      ],
+      "actions": ["Read", "Write", "List"]
+    }
+  ]
+}

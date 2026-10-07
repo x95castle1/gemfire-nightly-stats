@@ -10,9 +10,26 @@ if (!gemfireHome) {
     throw new GradleException('GEMFIRE_HOME is not set. Point it at a GemFire install, e.g. export GEMFIRE_HOME=~/dev/vmware-gemfire-10.3.2')
 }
 
+repositories {
+    // Only for the test libraries: the jar itself has no dependencies
+    mavenCentral()
+}
+
 dependencies {
     // The locator provides GemFire at runtime, so compile against the local install's jars
     compileOnly fileTree(dir: "${gemfireHome}/lib", include: '*.jar')
+
+    testImplementation platform('org.junit:junit-bom:5.13.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat = 'full'
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {

@@ -23,6 +23,19 @@ NIGHTLY_STATS_TIME=02:00
 # Also run once, 60 seconds after startup (handy for testing)
 NIGHTLY_STATS_RUN_ON_STARTUP=false
 
+# Upload each report to an S3-compatible store (SeaweedFS, MinIO, AWS S3) as well as writing it to
+# disk. Off unless S3_ENDPOINT is set. The object key is <S3_PREFIX>/<ENV>/<CLUSTER_NAME>/<file name>.
+# docker-compose.yml runs a local SeaweedFS that matches these values.
+# S3_ENDPOINT=http://localhost:8333
+# S3_BUCKET=gemfire-stats
+# Default: us-east-1. SeaweedFS and MinIO accept any value.
+# S3_REGION=us-east-1
+# Default: nightly-stats
+# S3_PREFIX=nightly-stats
+# Default: the AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables
+# S3_ACCESS_KEY=nightly-stats-dev
+# S3_SECRET_KEY=nightly-stats-dev-secret
+
 # Any other GemFire property can be passed with a "gemfire." prefix. For example, SSL:
 # gemfire.ssl-enabled-components=all
 # gemfire.ssl-protocols=TLSv1.2,TLSv1.3
