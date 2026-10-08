@@ -46,8 +46,11 @@ The collector runs on a locator and writes one report per cluster: when it was c
 | `src/main/java/com/example/gemfire/stats/NightlyStatsLocatorStart.java` | Starts the locator with its JMX manager running, schedules the daily run and writes the file |
 | `src/main/java/com/example/gemfire/stats/NightlyStatsCollector.java` | Reads the MBeans and builds the report, following the Source column above |
 | `src/main/java/com/example/gemfire/stats/Json.java` | Minimal JSON reader and writer. GemFire's bundled Jackson differs between 10.1 and 10.3, so it isn't used |
+| `src/main/java/com/example/gemfire/stats/S3Uploader.java` | Uploads a report to S3 with one signed PUT, using only the JDK (no AWS SDK) |
+| `src/main/java/com/example/gemfire/stats/ReportDelivery.java` | Finds reports that aren't uploaded yet, uploads them and records a receipt for each |
 | `scripts/start-locator.sh` | Runs the locator with GemFire's classpath and JVM flags |
 | `locator.properties.example` | Every setting, with comments |
+| `docker-compose.yml`, `.env.example` | A local SeaweedFS S3 store to upload to |
 
 The `Makefile` wraps the build, running it and a local test cluster. `make` lists every target.
 
@@ -75,6 +78,41 @@ Other things you can do:
 - Its messages go to the locator's log and contain `Nightly stats`. A failed run is logged, and the next day's run tries again. It never stops the locator.
 - Servers need nothing extra.
 - Not tested: a cluster with a security manager. Inside the JVM, `describe config` could then be refused. If that happens, `tls` is `null` and a warning is logged.
+
+## Uploading to S3
+
+If `S3_ENDPOINT` is set, the collector also uploads each report to that S3-compatible store (SeaweedFS, MinIO or AWS S3), keeping the file on disk too. The settings, all in `locator.properties`:
+
+| Setting | Default | What it is |
+| --- | --- | --- |
+| `S3_ENDPOINT` | not set: no upload | e.g. `http://localhost:8333`. HTTPS uses the JVM's default truststore, not GemFire's `ssl-*` settings |
+| `S3_BUCKET` | required | e.g. `gemfire-stats` |
+| `S3_REGION` | `us-east-1` | Used for signing. SeaweedFS and MinIO accept any value |
+| `S3_PREFIX` | `nightly-stats` | Start of every object key |
+| `S3_ACCESS_KEY`, `S3_SECRET_KEY` | the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables | So keys can stay out of the properties file |
+
+- Each report goes to `<S3_PREFIX>/<ENV>/<CLUSTER_NAME>/<CLUSTER_NAME>-<yyyy-MM-dd>.json`, e.g. `nightly-stats/local/test-cluster/test-cluster-2026-10-08.json`. Requests are path-style (`<endpoint>/<bucket>/<key>`). With upload on, `ENV` and `CLUSTER_NAME` may only contain letters, numbers, dots, underscores and hyphens.
+- Each successful upload writes a receipt to `<NIGHTLY_STATS_DIR>/.uploaded/`: the destination, the object key and the file's SHA-256. A report without a matching receipt is pending. That covers a failed upload, a same-day rerun that changed the file, and a new endpoint or bucket.
+- Pending reports are uploaded, newest first, when the locator starts and after every daily run, up to 32 per pass. A pass stops at the first failure, so while S3 is down each pass costs one failed request. A failure is logged (`Nightly stats upload failed`) and never stops the locator.
+- To upload everything again, e.g. after emptying the bucket, delete `.uploaded/` and restart the locator.
+
+### Local SeaweedFS
+
+`docker-compose.yml` runs SeaweedFS 4.48 in its single-process `mini` mode, with its data in a named volume. Both ports are bound to `127.0.0.1` only:
+
+- S3 API: `http://localhost:8333`. It creates the bucket on startup.
+- Admin UI: http://localhost:23646. Browse the reports under Object Store → Buckets.
+
+The S3 keys and the Admin UI login are in `.env`, which git ignores. `make s3-up` creates it from `.env.example` the first time.
+
+```sh
+make s3-up            # start SeaweedFS (creates .env on first use)
+make test S3=true     # the end-to-end test, plus: the locator uploads its report, then curl downloads it and compares
+make s3-ls            # list the bucket
+make s3-down          # stop SeaweedFS, keeping its data (docker compose down -v deletes it)
+```
+
+To upload from your own locator, add `S3_ENDPOINT=http://localhost:8333` and `S3_BUCKET=gemfire-stats` to `locator.properties`, and pass the keys from `.env` as properties or environment variables.
 
 ## Verification
 

@@ -64,9 +64,9 @@ final class S3Uploader {
                 .build();
     }
 
-    /** Where an object goes, for log messages, e.g. s3://gemfire-stats/nightly-stats/x.json */
-    String location(String key) {
-        return "s3://" + bucket + "/" + key;
+    /** The bucket's path-style URL, e.g. http://localhost:8333/gemfire-stats */
+    String destination() {
+        return baseUrl(endpoint) + "/" + bucket;
     }
 
     /** Uploads body as the object key, replacing any existing object. Throws on any non-2xx response. */
@@ -99,7 +99,7 @@ final class S3Uploader {
             if (error.length() > MAX_ERROR_BODY) {
                 error = error.substring(0, MAX_ERROR_BODY) + "...";
             }
-            throw new IOException("PUT " + location(key) + " to " + endpoint + " returned HTTP "
+            throw new IOException("PUT " + destination() + "/" + key + " returned HTTP "
                     + response.statusCode() + ": " + error.strip());
         }
     }

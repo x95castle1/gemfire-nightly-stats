@@ -14,12 +14,14 @@ SERVER_PORT_BASE ?= 40504
 TEST_ENV ?= local
 TEST_CLUSTER_NAME ?= test-cluster
 TEST_DIR ?= $(CURDIR)/.test-cluster
-# S3=true also uploads the test cluster's report to the local SeaweedFS (docker-compose.yml) and checks it
+# S3=true also uploads the test cluster's report to the local SeaweedFS (docker-compose.yml) and checks it.
+# Its keys and bucket come from ENV_FILE, which make s3-up creates from .env.example on first use.
 S3 ?= false
+ENV_FILE ?= .env
 S3_ENDPOINT ?= http://localhost:8333
-S3_BUCKET ?= gemfire-stats
-S3_ACCESS_KEY ?= nightly-stats-dev
-S3_SECRET_KEY ?= nightly-stats-dev-secret
+S3_BUCKET ?= $(or $(call env_value,S3_BUCKET),gemfire-stats)
+S3_ACCESS_KEY ?= $(call env_value,AWS_ACCESS_KEY_ID)
+S3_SECRET_KEY ?= $(call env_value,AWS_SECRET_ACCESS_KEY)
 # Properties file for `make run`
 PROPERTIES ?= locator.properties
 
@@ -31,6 +33,8 @@ SECURITY_FILE = $(TEST_DIR)/gfsecurity.properties
 CERT_PASSWORD = changeit
 ssl_on = $(filter true,$(SSL))
 s3_on = $(filter true,$(S3))
+# A value from ENV_FILE, e.g. $(call env_value,AWS_ACCESS_KEY_ID). Empty if the file or key is missing.
+env_value = $(shell sed -n 's/^$(1)=//p' $(ENV_FILE) 2>/dev/null | tail -1)
 CONNECT = connect --locator=localhost[$(LOCATOR_PORT)] $(if $(ssl_on),--use-ssl --security-properties-file=$(SECURITY_FILE))
 # Succeeds if something is listening on the port
 port_open = (exec 3<>/dev/tcp/127.0.0.1/$(1)) 2>/dev/null
@@ -143,14 +147,17 @@ verify-upload: ## Check the newest report was uploaded to the local SeaweedFS un
 	  "$(S3_ENDPOINT)/$(S3_BUCKET)/nightly-stats/$(TEST_ENV)/$(TEST_CLUSTER_NAME)" "$(S3_ACCESS_KEY):$(S3_SECRET_KEY)"
 
 .PHONY: s3-up
-s3-up: ## Start the local SeaweedFS S3 store and create its bucket (docker-compose.yml)
-	@S3_BUCKET=$(S3_BUCKET) docker compose up -d --wait seaweedfs >/dev/null
-	@S3_BUCKET=$(S3_BUCKET) docker compose run --rm create-bucket | tail -1
-	@echo "✓ SeaweedFS is up. S3 API: $(S3_ENDPOINT), file browser: http://localhost:8888/buckets/$(S3_BUCKET)/"
+s3-up: $(ENV_FILE) ## Start the local SeaweedFS S3 store, which creates the bucket (docker-compose.yml)
+	@docker compose --env-file $(ENV_FILE) up -d --wait seaweedfs >/dev/null
+	@echo "✓ SeaweedFS is up. S3 API: $(S3_ENDPOINT), Admin UI: http://localhost:23646 (login in $(ENV_FILE))"
+
+$(ENV_FILE):
+	@cp .env.example $@
+	@echo "✓ Created $@ from .env.example: local-only S3 keys and Admin UI login"
 
 .PHONY: s3-down
 s3-down: ## Stop the local SeaweedFS (keeps its data; docker compose down -v deletes it)
-	@docker compose down
+	@[ -f $(ENV_FILE) ] && docker compose --env-file $(ENV_FILE) down; true
 	@echo "✓ SeaweedFS stopped"
 
 .PHONY: s3-ls

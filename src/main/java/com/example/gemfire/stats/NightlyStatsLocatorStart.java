@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -45,8 +44,7 @@ public class NightlyStatsLocatorStart {
     private final Path outputDirectory;
     private final LocalTime runAt;
     /** null when S3_ENDPOINT isn't set */
-    private final S3Uploader uploader;
-    private final String s3Prefix;
+    private final ReportDelivery delivery;
 
     public NightlyStatsLocatorStart(Properties properties) {
         this.properties = properties;
@@ -55,13 +53,30 @@ public class NightlyStatsLocatorStart {
         this.workingDirectory = Paths.get(required("LOG_DIRECTORY"));
         this.outputDirectory = Paths.get(get("NIGHTLY_STATS_DIR", workingDirectory.resolve("nightly-stats").toString()));
         this.runAt = LocalTime.parse(get("NIGHTLY_STATS_TIME", "02:00"));
-        String s3Endpoint = get("S3_ENDPOINT", null);
-        this.uploader = s3Endpoint == null ? null : new S3Uploader(URI.create(s3Endpoint),
+        this.delivery = get("S3_ENDPOINT", null) == null ? null : buildDelivery();
+    }
+
+    /** Uploads to S3_ENDPOINT, with object keys <S3_PREFIX>/<ENV>/<CLUSTER_NAME>/<file name> */
+    private ReportDelivery buildDelivery() {
+        S3Uploader uploader = new S3Uploader(URI.create(get("S3_ENDPOINT", null)),
                 required("S3_BUCKET"),
                 get("S3_REGION", "us-east-1"),
                 requiredOrEnv("S3_ACCESS_KEY", "AWS_ACCESS_KEY_ID"),
                 requiredOrEnv("S3_SECRET_KEY", "AWS_SECRET_ACCESS_KEY"));
-        this.s3Prefix = get("S3_PREFIX", "nightly-stats").replaceAll("^/+|/+$", "");
+        String prefix = get("S3_PREFIX", "nightly-stats").replaceAll("^/+|/+$", "");
+        String keyPrefix = (prefix.isEmpty() ? "" : prefix + "/")
+                + keySegment("ENV", env) + "/" + keySegment("CLUSTER_NAME", clusterName);
+        return new ReportDelivery(outputDirectory, clusterName, keyPrefix, uploader.destination(),
+                (key, content) -> uploader.put(key, content, "application/json"));
+    }
+
+    /** ENV and CLUSTER_NAME become folders in the object key, so keep them to safe characters */
+    private static String keySegment(String key, String value) {
+        if (!value.matches("[A-Za-z0-9][A-Za-z0-9._-]*")) {
+            throw new IllegalArgumentException(key + " must be letters, numbers, dots, underscores or hyphens"
+                    + " when S3 upload is on: " + value);
+        }
+        return value;
     }
 
     public static void main(String... args) throws IOException {
@@ -116,9 +131,10 @@ public class NightlyStatsLocatorStart {
             thread.setDaemon(true);
             return thread;
         });
-        if (uploader != null) {
-            logger.info("Nightly stats reports will also be uploaded to {} at {}",
-                    uploader.location(objectKey("<file>")), get("S3_ENDPOINT", null));
+        if (delivery != null) {
+            logger.info("Nightly stats reports will also be uploaded to {}", delivery.location());
+            // Catch up on reports an earlier run couldn't upload, e.g. while S3 was down
+            scheduler.execute(this::uploadPending);
         }
         if (Boolean.parseBoolean(get("NIGHTLY_STATS_RUN_ON_STARTUP", "false"))) {
             // Give servers time to join before the first run
@@ -142,53 +158,46 @@ public class NightlyStatsLocatorStart {
     }
 
     static ZonedDateTime nextRun(ZonedDateTime now, LocalTime runAt) {
-        ZonedDateTime next = now.with(runAt);
-        return next.isAfter(now) ? next : next.plusDays(1);
+        ZonedDateTime next = now.toLocalDate().atTime(runAt).atZone(now.getZone());
+        // Resolve tomorrow's time from tomorrow's date. Adding a day to today's result would carry a
+        // spring-forward shift (02:00 -> 03:00) over to the day after.
+        return next.isAfter(now) ? next : now.toLocalDate().plusDays(1).atTime(runAt).atZone(now.getZone());
     }
 
     private void writeReport() {
-        Path file;
-        byte[] report;
         try {
             NightlyStatsCollector collector =
                     new NightlyStatsCollector(ManagementFactory.getPlatformMBeanServer(), env, clusterName);
-            report = Json.write(collector.collect()).getBytes(StandardCharsets.UTF_8);
+            String report = Json.write(collector.collect());
 
             Files.createDirectories(outputDirectory);
-            file = outputDirectory.resolve(clusterName + "-" + LocalDate.now() + ".json");
+            Path file = outputDirectory.resolve(clusterName + "-" + LocalDate.now() + ".json");
             Path temporary = outputDirectory.resolve(file.getFileName() + ".tmp");
-            Files.write(temporary, report);
+            Files.writeString(temporary, report);
             Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             logger.info("Nightly stats written to {}", file);
         } catch (Exception e) {
             // Never let a failed collection affect the locator; the next run tries again
             logger.error("Nightly stats collection failed", e);
+        }
+        // Even if today's collection failed, earlier reports may still need uploading
+        uploadPending();
+    }
+
+    /** Uploads reports on disk that haven't been uploaded yet. A failure is logged, and the next pass retries. */
+    private void uploadPending() {
+        if (delivery == null) {
             return;
         }
-        if (uploader != null) {
-            upload(file, report);
-        }
-    }
-
-    /** Uploads a report that's already on disk. A failed upload is logged and leaves the file in place. */
-    private void upload(Path file, byte[] report) {
-        String key = objectKey(file.getFileName().toString());
         try {
-            uploader.put(key, report, "application/json");
-            logger.info("Nightly stats uploaded to {}", uploader.location(key));
+            delivery.uploadPending();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            logger.error("Nightly stats upload of {} was interrupted", file);
+            logger.error("Nightly stats upload was interrupted");
         } catch (Exception e) {
-            logger.error("Nightly stats upload of {} to {} failed. The report is still on disk.",
-                    file, uploader.location(key), e);
+            logger.error("Nightly stats upload failed. Reports stay on disk and are retried after the next run"
+                    + " or locator restart.", e);
         }
-    }
-
-    /** <S3_PREFIX>/<ENV>/<CLUSTER_NAME>/<file name>, so clusters sharing a bucket stay apart */
-    private String objectKey(String fileName) {
-        String key = env + "/" + clusterName + "/" + fileName;
-        return s3Prefix.isEmpty() ? key : s3Prefix + "/" + key;
     }
 
     private String required(String key) {

@@ -1,42 +1,37 @@
-# Local S3 (SeaweedFS) for the nightly stats upload. Start it with:
-#   docker compose up -d
-# S3 API: http://localhost:8333, keys in seaweedfs/s3.json (local dev only).
-# SEAWEEDFS_IMAGE overrides the image, e.g. to pull it through a registry mirror.
+# Local S3 (SeaweedFS) for the nightly stats upload. Start it with `make s3-up`, which creates
+# .env from .env.example on first use, or with `docker compose up -d` once .env exists.
+# Ports are bound to 127.0.0.1 only:
+#   S3 API    http://localhost:8333   (keys: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in .env)
+#   Admin UI  http://localhost:23646  (login: WEED_ADMIN_USER / WEED_ADMIN_PASSWORD in .env)
 
 services:
   seaweedfs:
-    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:4.48}
-    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json -master.telemetry=false
+    image: chrislusf/seaweedfs:4.48
+    # mini: master, volume, filer, S3 and Admin UI in one process
+    command:
+      - mini
+      - -dir=/data
+      - -ip=seaweedfs
+      - -ip.bind=0.0.0.0
+      - -webdav=false
+      - -master.telemetry=false
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID in .env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Set AWS_SECRET_ACCESS_KEY in .env}
+      WEED_ADMIN_USER: ${WEED_ADMIN_USER:-admin}
+      WEED_ADMIN_PASSWORD: ${WEED_ADMIN_PASSWORD:?Set WEED_ADMIN_PASSWORD in .env}
+      S3_BUCKET: ${S3_BUCKET:-gemfire-stats}
     ports:
-      - "${S3_PORT:-8333}:8333"
-      # Web UIs, localhost only: they have no login, and the filer UI can upload and delete files
-      - "127.0.0.1:${FILER_UI_PORT:-8888}:8888"   # file browser, buckets are under /buckets/
-      - "127.0.0.1:${MASTER_UI_PORT:-9333}:9333"  # cluster and volume status
+      - "127.0.0.1:${S3_PORT:-8333}:8333"
+      - "127.0.0.1:${ADMIN_UI_PORT:-23646}:23646"
     volumes:
       - seaweedfs-data:/data
-      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
     healthcheck:
-      # 127.0.0.1, not localhost: inside the container localhost resolves to IPv6, which SeaweedFS doesn't listen on
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8333/healthz"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8333/readyz"]
       interval: 2s
-      timeout: 2s
-      retries: 30
-
-  # Creates the bucket once SeaweedFS is up. Safe to rerun: an existing bucket is left alone.
-  create-bucket:
-    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:4.48}
-    depends_on:
-      seaweedfs:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        if echo "s3.bucket.list" | weed shell -master=seaweedfs:9333 | grep -qw "${S3_BUCKET:-gemfire-stats}"; then
-          echo "Bucket ${S3_BUCKET:-gemfire-stats} already exists"
-        else
-          echo "s3.bucket.create -name ${S3_BUCKET:-gemfire-stats}" | weed shell -master=seaweedfs:9333
-        fi
-    restart: "no"
+      timeout: 3s
+      retries: 60
+    restart: unless-stopped
 
 volumes:
   seaweedfs-data:
