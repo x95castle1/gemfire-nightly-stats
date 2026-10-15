@@ -23,6 +23,7 @@ S3_ENDPOINT ?= http://localhost:8333
 S3_BUCKET ?= $(or $(call env_value,S3_BUCKET),gemfire-stats)
 S3_ACCESS_KEY ?= $(call env_value,AWS_ACCESS_KEY_ID)
 S3_SECRET_KEY ?= $(call env_value,AWS_SECRET_ACCESS_KEY)
+export S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY S3_SECRET_KEY
 # Properties file for `make run`
 PROPERTIES ?= locator.properties
 
@@ -96,8 +97,8 @@ standalone-dist: check-env ## Build standalone ZIP/TAR distributions (client lib
 	@./gradlew assembleDist --quiet
 
 .PHONY: test-standalone
-test-standalone: check-env ## Test remote collection, embedded report parity, status and export (SSL=true|false)
-	@scripts/test-standalone.sh $(SSL) $(AUTH)
+test-standalone: check-env $(if $(s3_on),s3-up) ## Test standalone collection/export, plus real S3 delivery when S3=true
+	@scripts/test-standalone.sh $(SSL) $(AUTH) $(S3)
 
 .PHONY: test
 test: ## End-to-end test: start the test cluster, wait for the collector's startup run, check the report, stop

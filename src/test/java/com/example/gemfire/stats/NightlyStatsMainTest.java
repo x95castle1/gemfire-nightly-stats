@@ -7,6 +7,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -222,5 +223,19 @@ class NightlyStatsMainTest {
             assertEquals(0, second.code(), second.error());
             assertEquals(1L, second.summary().get("uploaded"));
         } finally { server.stop(0); }
+    }
+
+    @Test
+    void refusedConnectionStillProducesAnUploadErrorAndPreservesTheReport() throws Exception {
+        int port;
+        try (ServerSocket unused = new ServerSocket(0)) { port = unused.getLocalPort(); }
+        Result result = run("collect", s3Settings(port), this::report);
+        assertEquals(0, result.code(), result.error());
+        assertEquals(Boolean.TRUE, result.summary().get("collection_succeeded"));
+        assertEquals(1L, result.summary().get("pending_uploads"));
+        String error = assertInstanceOf(String.class, result.summary().get("upload_error"));
+        assertFalse(error.isBlank());
+        assertTrue(result.error().contains(error), result.error());
+        assertEquals(1, store().reports().size());
     }
 }

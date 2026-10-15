@@ -5,6 +5,7 @@ PROJECT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 cd "$PROJECT_DIR"
 TEST_SSL=${1:-true}
 TEST_AUTH=${2:-false}
+TEST_S3=${3:-false}
 TEST_ROOT=${STANDALONE_TEST_DIR:-$PROJECT_DIR/.test-cluster/standalone-$TEST_SSL-$TEST_AUTH-$(date +%s)-$$}
 TEST_LOCATOR_PORT=${STANDALONE_LOCATOR_PORT:-21334}
 TEST_JMX_PORT=${STANDALONE_JMX_PORT:-22099}
@@ -54,6 +55,7 @@ if [ "$TEST_AUTH" = true ]; then
   scripts/collect-stats.sh collect --config "$TEST_ROOT/token.properties" > "$TEST_ROOT/token.json"
   jq -e '.collection_succeeded == true' "$TEST_ROOT/token.json" >/dev/null
   echo "✓ Remote collection with a reader role, token authentication, rejected credentials, status and export passed (SSL=$TEST_SSL)"
+  if [ "$TEST_S3" = true ]; then scripts/verify-standalone-s3.sh "$CONFIG" "$REPORT" "$TEST_SSL"; fi
   exit 0
 fi
 # Compare both entry points' reports, ignoring the two fields that naturally change with time.
@@ -67,3 +69,4 @@ scripts/verify-report.sh "$EMBEDDED" 2 "$TEST_SSL"
 diff <(jq -S 'del(.collected_at, .members[].uptime_seconds)' "$EMBEDDED") \
      <(jq -S 'del(.collected_at, .members[].uptime_seconds)' "$REPORT")
 echo "✓ Standalone and embedded reports match (SSL=$TEST_SSL); status and export passed"
+if [ "$TEST_S3" = true ]; then scripts/verify-standalone-s3.sh "$CONFIG" "$REPORT" "$TEST_SSL"; fi

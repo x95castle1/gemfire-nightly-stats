@@ -113,6 +113,14 @@ The commands write JSON results to stdout and diagnostics to stderr. Exit status
 
 `./gradlew test` covers the standalone commands, authenticated remote JMX, timeouts, file locking, archive integrity, receipt recovery and S3 outages. `make test-standalone SSL=false` and `make test-standalone SSL=true` start an isolated locator and two servers, collect through a separate JVM, verify the report, run offline status/export and compare the standalone report to the embedded startup report. `make test-standalone SSL=true AUTH=true` instead tests a security manager with a `CLUSTER:READ` account, token authentication and rejected credentials. Each test stops the members it started. Default test ports are 21334, 22099 and 41504/41505; override `STANDALONE_LOCATOR_PORT`, `STANDALONE_JMX_PORT`, `STANDALONE_SERVER_PORT` or `STANDALONE_TEST_DIR` as environment variables when needed.
 
+To include a real S3 regression, run:
+
+```sh
+make test-standalone S3=true SSL=true AUTH=true
+```
+
+This starts the local SeaweedFS service, collects locally, then backfills the saved report with JMX pointed at an unreachable address. It downloads each uploaded version with curl's independent SigV4 signing and compares the bytes. It also checks collection with S3 enabled, unchanged reports being skipped, optional and required delivery during an outage, and recovery of a changed report. The outage is simulated by directing this collector to a closed loopback port; the shared S3 service keeps running. Each run uses a separate `regression/<test-run>/` S3 prefix. The GemFire test cluster is stopped afterward; reports and JSON run summaries remain in the printed test directory, and SeaweedFS stays up for inspection (`make s3-down` stops it without removing its data).
+
 ## Sample collector
 
 `NightlyStatsLocatorStart` starts a locator and, from a background thread inside it, writes the report above to a JSON file every day. It reads the MBeans from the locator's own JVM, so it needs no JMX connection, credentials or keystores.

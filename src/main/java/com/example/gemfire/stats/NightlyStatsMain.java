@@ -89,11 +89,11 @@ public final class NightlyStatsMain {
                 return execute(command, settings, store, delivery, env, mode, clock, required, source, out, err);
             }
         } catch (IllegalArgumentException | java.time.DateTimeException e) {
-            err.println("Configuration error: " + e.getMessage());
+            err.println("Configuration error: " + failureMessage(e));
             return CONFIG_ERROR;
         } catch (Exception e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            err.println("Command failed: " + e.getMessage());
+            err.println("Command failed: " + failureMessage(e));
             return COLLECTION_ERROR;
         }
     }
@@ -110,7 +110,7 @@ public final class NightlyStatsMain {
             try {
                 report = new ReportJob(store, clock).collect(() -> source.collect(settings));
             } catch (Exception e) {
-                err.println("Collection/local write failed: " + e.getMessage());
+                err.println("Collection/local write failed: " + failureMessage(e));
                 result = COLLECTION_ERROR;
                 if (e instanceof InterruptedException) {
                     Thread.currentThread().interrupt();
@@ -125,7 +125,7 @@ public final class NightlyStatsMain {
             try {
                 uploaded = delivery.uploadPending();
             } catch (Exception e) {
-                uploadError = e.getMessage();
+                uploadError = failureMessage(e);
                 err.println("Upload deferred; reports remain on disk: " + uploadError);
                 if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             }
@@ -185,5 +185,10 @@ public final class NightlyStatsMain {
         String value = options.get(name);
         if (value == null || value.isBlank()) throw new IllegalArgumentException("Missing " + name);
         return value;
+    }
+
+    private static String failureMessage(Exception error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
     }
 }
