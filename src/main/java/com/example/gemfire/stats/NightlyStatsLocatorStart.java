@@ -4,13 +4,11 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.management.ManagementFactory;
-import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
+import java.time.Clock;
 import java.time.Duration;
-import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZonedDateTime;
 import java.util.Properties;
@@ -38,6 +36,7 @@ public class NightlyStatsLocatorStart {
     private static final Duration STARTUP_RUN_DELAY = Duration.ofSeconds(60);
 
     private final Properties properties;
+    private final StatsSettings settings;
     private final String env;
     private final String clusterName;
     private final Path workingDirectory;
@@ -45,38 +44,19 @@ public class NightlyStatsLocatorStart {
     private final LocalTime runAt;
     /** null when S3_ENDPOINT isn't set */
     private final ReportDelivery delivery;
+    private final ReportJob job;
 
     public NightlyStatsLocatorStart(Properties properties) {
         this.properties = properties;
+        this.settings = new StatsSettings(properties);
         this.env = required("ENV");
         this.clusterName = required("CLUSTER_NAME");
         this.workingDirectory = Paths.get(required("LOG_DIRECTORY"));
         this.outputDirectory = Paths.get(get("NIGHTLY_STATS_DIR", workingDirectory.resolve("nightly-stats").toString()));
         this.runAt = LocalTime.parse(get("NIGHTLY_STATS_TIME", "02:00"));
-        this.delivery = get("S3_ENDPOINT", null) == null ? null : buildDelivery();
-    }
-
-    /** Uploads to S3_ENDPOINT, with object keys <S3_PREFIX>/<ENV>/<CLUSTER_NAME>/<file name> */
-    private ReportDelivery buildDelivery() {
-        S3Uploader uploader = new S3Uploader(URI.create(get("S3_ENDPOINT", null)),
-                required("S3_BUCKET"),
-                get("S3_REGION", "us-east-1"),
-                requiredOrEnv("S3_ACCESS_KEY", "AWS_ACCESS_KEY_ID"),
-                requiredOrEnv("S3_SECRET_KEY", "AWS_SECRET_ACCESS_KEY"));
-        String prefix = get("S3_PREFIX", "nightly-stats").replaceAll("^/+|/+$", "");
-        String keyPrefix = (prefix.isEmpty() ? "" : prefix + "/")
-                + keySegment("ENV", env) + "/" + keySegment("CLUSTER_NAME", clusterName);
-        return new ReportDelivery(outputDirectory, clusterName, keyPrefix, uploader.destination(),
-                (key, content) -> uploader.put(key, content, "application/json"));
-    }
-
-    /** ENV and CLUSTER_NAME become folders in the object key, so keep them to safe characters */
-    private static String keySegment(String key, String value) {
-        if (!value.matches("[A-Za-z0-9][A-Za-z0-9._-]*")) {
-            throw new IllegalArgumentException(key + " must be letters, numbers, dots, underscores or hyphens"
-                    + " when S3 upload is on: " + value);
-        }
-        return value;
+        this.delivery = settings.delivery(outputDirectory, env, clusterName,
+                get("S3_ENDPOINT", null) == null ? "local" : "s3", true);
+        this.job = new ReportJob(new ReportStore(outputDirectory, clusterName), Clock.systemDefaultZone());
     }
 
     public static void main(String... args) throws IOException {
@@ -166,15 +146,8 @@ public class NightlyStatsLocatorStart {
 
     private void writeReport() {
         try {
-            NightlyStatsCollector collector =
-                    new NightlyStatsCollector(ManagementFactory.getPlatformMBeanServer(), env, clusterName);
-            String report = Json.write(collector.collect());
-
-            Files.createDirectories(outputDirectory);
-            Path file = outputDirectory.resolve(clusterName + "-" + LocalDate.now() + ".json");
-            Path temporary = outputDirectory.resolve(file.getFileName() + ".tmp");
-            Files.writeString(temporary, report);
-            Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            Path file = job.collect(() -> new NightlyStatsCollector(
+                    ManagementFactory.getPlatformMBeanServer(), env, clusterName).collect());
             logger.info("Nightly stats written to {}", file);
         } catch (Exception e) {
             // Never let a failed collection affect the locator; the next run tries again
@@ -201,29 +174,11 @@ public class NightlyStatsLocatorStart {
     }
 
     private String required(String key) {
-        String value = get(key, null);
-        if (value == null) {
-            throw new IllegalArgumentException("Missing required property " + key);
-        }
-        return value;
-    }
-
-    /** The property, or else the environment variable, so secrets needn't be in the properties file */
-    private String requiredOrEnv(String key, String environmentVariable) {
-        String value = get(key, System.getenv(environmentVariable));
-        if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException("Missing required property " + key
-                    + " (or environment variable " + environmentVariable + ")");
-        }
-        return value;
+        return settings.required(key);
     }
 
     /** Trims the value and strips double quotes, which startup property files often wrap values in. */
     private String get(String key, String defaultValue) {
-        String value = properties.getProperty(key);
-        if (value == null || value.replace("\"", "").isBlank()) {
-            return defaultValue;
-        }
-        return value.replace("\"", "").trim();
+        return settings.get(key, defaultValue);
     }
 }

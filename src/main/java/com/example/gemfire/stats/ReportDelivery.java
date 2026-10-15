@@ -2,14 +2,10 @@ package com.example.gemfire.stats;
 
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
-import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
-import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import org.apache.logging.log4j.LogManager;
@@ -28,8 +24,6 @@ final class ReportDelivery {
     /** Caps one pass after a long outage. The rest go on the next pass. */
     static final int MAX_UPLOADS_PER_PASS = 32;
     private static final String RECEIPTS_DIRECTORY = ".uploaded";
-    /** yyyy-MM-dd.json, after "<CLUSTER_NAME>-" */
-    private static final int DATE_AND_EXTENSION_LENGTH = 15;
 
     @FunctionalInterface
     interface Sink {
@@ -37,7 +31,7 @@ final class ReportDelivery {
     }
 
     private final Path directory;
-    private final String clusterName;
+    private final ReportStore store;
     private final String keyPrefix;
     private final String destination;
     private final Sink sink;
@@ -49,7 +43,7 @@ final class ReportDelivery {
      */
     ReportDelivery(Path directory, String clusterName, String keyPrefix, String destination, Sink sink) {
         this.directory = directory;
-        this.clusterName = clusterName;
+        this.store = new ReportStore(directory, clusterName);
         this.keyPrefix = keyPrefix;
         this.destination = destination;
         this.sink = sink;
@@ -72,8 +66,8 @@ final class ReportDelivery {
             }
             byte[] content = Files.readAllBytes(file);
             String key = keyPrefix + "/" + file.getFileName();
-            String receipt = destination + "\n" + key + "\n" + sha256(content) + "\n";
-            Path receiptFile = directory.resolve(RECEIPTS_DIRECTORY).resolve(file.getFileName() + ".receipt");
+            String receipt = receipt(file, content);
+            Path receiptFile = receiptFile(file);
             if (receipt.equals(readReceipt(receiptFile))) {
                 continue;
             }
@@ -93,30 +87,24 @@ final class ReportDelivery {
 
     /** This cluster's daily reports, newest first. Skips temporary files, symbolic links and other clusters' reports. */
     List<Path> reports() throws IOException {
-        if (!Files.isDirectory(directory)) {
-            return List.of();
-        }
-        try (var files = Files.list(directory)) {
-            return files.filter(file -> Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS))
-                    .filter(file -> isDailyReport(file.getFileName().toString()))
-                    .sorted(Comparator.comparing((Path file) -> file.getFileName().toString()).reversed())
-                    .toList();
-        }
+        return store.reports();
     }
 
-    /** <CLUSTER_NAME>-<yyyy-MM-dd>.json, with a real date */
-    private boolean isDailyReport(String name) {
-        String prefix = clusterName + "-";
-        if (!name.startsWith(prefix) || !name.endsWith(".json")
-                || name.length() != prefix.length() + DATE_AND_EXTENSION_LENGTH) {
-            return false;
+    /** Receipt inspection is entirely local; status works even when S3 is unreachable. */
+    List<Path> pendingReports() throws IOException {
+        java.util.ArrayList<Path> pending = new java.util.ArrayList<>();
+        for (Path file : reports()) {
+            if (!receipt(file, Files.readAllBytes(file)).equals(readReceipt(receiptFile(file)))) pending.add(file);
         }
-        try {
-            LocalDate.parse(name.substring(prefix.length(), name.length() - ".json".length()));
-            return true;
-        } catch (DateTimeParseException e) {
-            return false;
-        }
+        return pending;
+    }
+
+    private String receipt(Path file, byte[] content) {
+        return destination + "\n" + keyPrefix + "/" + file.getFileName() + "\n" + sha256(content) + "\n";
+    }
+
+    private Path receiptFile(Path file) {
+        return directory.resolve(RECEIPTS_DIRECTORY).resolve(file.getFileName() + ".receipt");
     }
 
     private static String readReceipt(Path file) {

@@ -7,6 +7,7 @@ export GEMFIRE_HOME
 
 # Test cluster settings. Override on the command line, e.g. make test SSL=false
 SSL ?= true
+AUTH ?= false
 SERVER_COUNT ?= 2
 LOCATOR_PORT ?= 20334
 JMX_PORT ?= 21099
@@ -32,10 +33,13 @@ CERTS_DIR = $(TEST_DIR)/certs
 SECURITY_FILE = $(TEST_DIR)/gfsecurity.properties
 CERT_PASSWORD = changeit
 ssl_on = $(filter true,$(SSL))
+auth_on = $(filter true,$(AUTH))
+security_on = $(or $(ssl_on),$(auth_on))
 s3_on = $(filter true,$(S3))
 # A value from ENV_FILE, e.g. $(call env_value,AWS_ACCESS_KEY_ID). Empty if the file or key is missing.
 env_value = $(shell sed -n 's/^$(1)=//p' $(ENV_FILE) 2>/dev/null | tail -1)
-CONNECT = connect --locator=localhost[$(LOCATOR_PORT)] $(if $(ssl_on),--use-ssl --security-properties-file=$(SECURITY_FILE))
+AUTH_CONNECT_ARGS = --user=cluster,data --password=cluster,data
+CONNECT = $(strip connect --locator=localhost[$(LOCATOR_PORT)] $(if $(ssl_on),--use-ssl) $(if $(security_on),--security-properties-file=$(SECURITY_FILE)) $(if $(auth_on),$(AUTH_CONNECT_ARGS)))
 # Succeeds if something is listening on the port
 port_open = (exec 3<>/dev/tcp/127.0.0.1/$(1)) 2>/dev/null
 
@@ -51,6 +55,14 @@ ssl-truststore-password=$(CERT_PASSWORD)
 ssl-truststore-type=PKCS12
 endef
 export SSL_PROPERTIES
+
+# Test-only example security manager. The admin role can create regions; clusterread can only read.
+define AUTH_PROPERTIES
+security-manager=org.apache.geode.examples.SimpleSecurityManager
+security-username=cluster,data
+security-password=cluster,data
+endef
+export AUTH_PROPERTIES
 
 .PHONY: help
 help: ## List the targets
@@ -73,6 +85,19 @@ build: check-env ## Build the collector jar
 run: build ## Run a locator with the collector in the foreground, from PROPERTIES (default locator.properties)
 	@test -f "$(PROPERTIES)" || { echo "✘ $(PROPERTIES) not found. Copy locator.properties.example and edit it."; exit 1; }
 	scripts/start-locator.sh $(PROPERTIES)
+
+.PHONY: collect
+collect: PROPERTIES = standalone.properties
+collect: build ## Collect from an existing cluster: make collect PROPERTIES=standalone.properties
+	scripts/collect-stats.sh collect --config $(PROPERTIES)
+
+.PHONY: standalone-dist
+standalone-dist: check-env ## Build standalone ZIP/TAR distributions (client libraries come from GEMFIRE_HOME)
+	@./gradlew assembleDist --quiet
+
+.PHONY: test-standalone
+test-standalone: check-env ## Test remote collection, embedded report parity, status and export (SSL=true|false)
+	@scripts/test-standalone.sh $(SSL) $(AUTH)
 
 .PHONY: test
 test: ## End-to-end test: start the test cluster, wait for the collector's startup run, check the report, stop
@@ -104,7 +129,7 @@ start-servers: check-env test-config ## Start the test cluster's servers (SERVER
 	  mkdir -p $(TEST_DIR)/server-$$i; \
 	  $(GFSH) -e "start server --name=test-server-$$i --dir=$(TEST_DIR)/server-$$i \
 	    --locators=localhost[$(LOCATOR_PORT)] --server-port=$$(($(SERVER_PORT_BASE) + i)) \
-	    $(if $(ssl_on),--security-properties-file=$(SECURITY_FILE)) --J=-Xmx512m --J=-Dgemfire.http-service-port=0" \
+	    $(if $(security_on),--security-properties-file=$(SECURITY_FILE)) --J=-Xmx512m --J=-Dgemfire.http-service-port=0" \
 	    | grep "is currently online" >/dev/null || { echo "✘ test-server-$$i didn't start. See $(TEST_DIR)/server-$$i"; exit 1; }; \
 	  echo "✓ Started test-server-$$i"; \
 	done
@@ -194,13 +219,18 @@ test-config: $(if $(ssl_on),certs)
 	  echo "LOG_DIRECTORY=$(LOCATOR_DIR)"; \
 	  echo "NIGHTLY_STATS_RUN_ON_STARTUP=true"; \
 	  echo "gemfire.http-service-port=0"; \
+	  echo "gemfire.jmx-manager-hostname-for-clients=localhost"; \
 	  if [ -n "$(s3_on)" ]; then \
 	    echo "S3_ENDPOINT=$(S3_ENDPOINT)"; echo "S3_BUCKET=$(S3_BUCKET)"; \
 	    echo "S3_ACCESS_KEY=$(S3_ACCESS_KEY)"; echo "S3_SECRET_KEY=$(S3_SECRET_KEY)"; \
 	  fi; \
 	  if [ -n "$(ssl_on)" ]; then echo "$$SSL_PROPERTIES" | sed 's/^/gemfire./'; fi; \
+	  if [ -n "$(auth_on)" ]; then echo "$$AUTH_PROPERTIES" | sed 's/^/gemfire./'; fi; \
 	} > $(TEST_DIR)/locator.properties
-	@if [ -n "$(ssl_on)" ]; then echo "$$SSL_PROPERTIES" > $(SECURITY_FILE); fi
+	@{ \
+	  if [ -n "$(ssl_on)" ]; then echo "$$SSL_PROPERTIES"; fi; \
+	  if [ -n "$(auth_on)" ]; then echo "$$AUTH_PROPERTIES"; fi; \
+	} > $(SECURITY_FILE)
 
 .PHONY: certs
 certs: $(CERTS_DIR)/truststore.p12 ## Create a self-signed keystore and truststore for the test cluster

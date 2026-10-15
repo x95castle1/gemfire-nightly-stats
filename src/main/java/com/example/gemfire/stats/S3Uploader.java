@@ -48,10 +48,7 @@ final class S3Uploader {
     }
 
     S3Uploader(URI endpoint, String bucket, String region, String accessKey, String secretKey, Clock clock) {
-        if (!"http".equals(endpoint.getScheme()) && !"https".equals(endpoint.getScheme())) {
-            throw new IllegalArgumentException("S3 endpoint must be an http:// or https:// URL: " + endpoint);
-        }
-        this.endpoint = withoutDefaultPort(endpoint);
+        this.endpoint = validEndpoint(endpoint);
         this.bucket = bucket;
         this.region = region;
         this.accessKey = accessKey;
@@ -66,7 +63,22 @@ final class S3Uploader {
 
     /** The bucket's path-style URL, e.g. http://localhost:8333/gemfire-stats */
     String destination() {
-        return baseUrl(endpoint) + "/" + bucket;
+        return destination(endpoint, bucket);
+    }
+
+    static String destination(URI endpoint, String bucket) {
+        return baseUrl(validEndpoint(endpoint)) + "/" + bucket;
+    }
+
+    static URI validEndpoint(URI endpoint) {
+        if ((!"http".equals(endpoint.getScheme()) && !"https".equals(endpoint.getScheme()))
+                || endpoint.getHost() == null || endpoint.getRawUserInfo() != null
+                || endpoint.getRawQuery() != null || endpoint.getRawFragment() != null
+                || (endpoint.getPath() != null && !endpoint.getPath().isEmpty() && !endpoint.getPath().equals("/"))
+                || endpoint.getPort() == 0 || endpoint.getPort() > 65535) {
+            throw new IllegalArgumentException("S3_ENDPOINT must be an http(s)://host[:port] URL without credentials, path, query or fragment");
+        }
+        return withoutDefaultPort(endpoint);
     }
 
     /** Uploads body as the object key, replacing any existing object. Throws on any non-2xx response. */

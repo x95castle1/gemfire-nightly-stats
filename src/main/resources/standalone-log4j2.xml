@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+  <Appenders>
+    <Console name="Stderr" target="SYSTEM_ERR">
+      <PatternLayout pattern="%d{ISO8601} %-5level %msg%n%throwable"/>
+    </Console>
+  </Appenders>
+  <Loggers>
+    <Logger name="org.apache.geode" level="WARN"/>
+    <Root level="INFO"><AppenderRef ref="Stderr"/></Root>
+  </Loggers>
+</Configuration>

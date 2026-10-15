@@ -5,3 +5,5 @@ build/
 .test-cluster/
 locator.properties
 .env
+standalone.properties
+reports/
