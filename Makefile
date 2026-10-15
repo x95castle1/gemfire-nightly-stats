@@ -4,6 +4,11 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 export GEMFIRE_HOME
+EMBEDDED_LAUNCHER ?= examples/01-embedded-locator/scripts/start-locator.sh
+STANDALONE_LAUNCHER ?= examples/02-standalone-jmx/scripts/collect-stats.sh
+export EMBEDDED_LAUNCHER STANDALONE_LAUNCHER
+# The standalone test starts an ordinary gfsh locator with no embedded collector.
+START_MODE ?= embedded
 
 # Test cluster settings. Override on the command line, e.g. make test SSL=false
 SSL ?= true
@@ -67,7 +72,7 @@ export AUTH_PROPERTIES
 
 .PHONY: help
 help: ## List the targets
-	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-15s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-20s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Test cluster settings (override with make <target> NAME=value):"
 	@echo "  SSL=$(SSL) S3=$(S3) SERVER_COUNT=$(SERVER_COUNT) LOCATOR_PORT=$(LOCATOR_PORT) JMX_PORT=$(JMX_PORT) SERVER_PORT_BASE=$(SERVER_PORT_BASE)"
@@ -78,27 +83,44 @@ check-env:
 	@test -x "$(GFSH)" || { echo "✘ No gfsh at $(GFSH). Check GEMFIRE_HOME."; exit 1; }
 
 .PHONY: build
-build: check-env ## Build the collector jar
+build: check-env ## Build both self-contained examples
 	@./gradlew build --quiet
-	@echo "✓ Built build/libs/gemfire-nightly-stats.jar"
+	@echo "✓ Built examples/01-embedded-locator and examples/02-standalone-jmx"
 
 .PHONY: run
 run: build ## Run a locator with the collector in the foreground, from PROPERTIES (default locator.properties)
-	@test -f "$(PROPERTIES)" || { echo "✘ $(PROPERTIES) not found. Copy locator.properties.example and edit it."; exit 1; }
-	scripts/start-locator.sh $(PROPERTIES)
+	@test -f "$(PROPERTIES)" || { echo "✘ $(PROPERTIES) not found. Copy examples/01-embedded-locator/locator.properties.example and edit it."; exit 1; }
+	"$(EMBEDDED_LAUNCHER)" "$(PROPERTIES)"
+
+.PHONY: run-embedded
+run-embedded: run ## Run example 01 with PROPERTIES (default locator.properties)
 
 .PHONY: collect
 collect: PROPERTIES = standalone.properties
 collect: build ## Collect from an existing cluster: make collect PROPERTIES=standalone.properties
-	scripts/collect-stats.sh collect --config $(PROPERTIES)
+	"$(STANDALONE_LAUNCHER)" collect --config "$(PROPERTIES)"
+
+.PHONY: collect-standalone
+collect-standalone: collect ## Run example 02 with PROPERTIES (default standalone.properties)
 
 .PHONY: standalone-dist
 standalone-dist: check-env ## Build standalone ZIP/TAR distributions (client libraries come from GEMFIRE_HOME)
-	@./gradlew assembleDist --quiet
+	@./gradlew :02-standalone-jmx:assembleDist --quiet
+
+.PHONY: embedded-dist
+embedded-dist: check-env ## Build embedded locator ZIP/TAR distributions
+	@./gradlew :01-embedded-locator:assembleDist --quiet
 
 .PHONY: test-standalone
-test-standalone: check-env $(if $(s3_on),s3-up) ## Test standalone collection/export, plus real S3 delivery when S3=true
-	@scripts/test-standalone.sh $(SSL) $(AUTH) $(S3)
+test-standalone: build $(if $(s3_on),s3-up) ## Test standalone collection/export against a normal gfsh locator; S3=true checks delivery
+	@test-support/scripts/test-standalone.sh $(SSL) $(AUTH) $(S3)
+
+.PHONY: test-parity
+test-parity: build ## Compare embedded and remote reports from the same cluster (without authentication)
+	@test-support/scripts/test-standalone.sh $(SSL) false false embedded
+
+.PHONY: test-embedded
+test-embedded: test ## Test example 01 against its embedded locator
 
 .PHONY: test
 test: ## End-to-end test: start the test cluster, wait for the collector's startup run, check the report, stop
@@ -111,13 +133,21 @@ test: ## End-to-end test: start the test cluster, wait for the collector's start
 	@status=0; $(MAKE) --no-print-directory verify $(if $(s3_on),verify-upload) || status=$$?; $(MAKE) --no-print-directory stop; exit $$status
 
 .PHONY: start
-start: start-locator start-servers create-regions ## Start the test cluster: the collector's locator, servers and 3 regions
+start: start-locator start-servers create-regions ## Start a test cluster (START_MODE=embedded or standalone)
 
 .PHONY: start-locator
-start-locator: build test-config ## Start the test cluster's locator, with the collector, in the background
+start-locator: check-env test-config $(if $(filter embedded,$(START_MODE)),build) ## Start the test locator for START_MODE
 	@if $(call port_open,$(LOCATOR_PORT)); then echo "✘ Port $(LOCATOR_PORT) is in use. Run make stop, or set LOCATOR_PORT."; exit 1; fi
 	@mkdir -p $(LOCATOR_DIR)
-	@JAVA_OPTS=-Xmx512m nohup scripts/start-locator.sh $(TEST_DIR)/locator.properties > $(TEST_DIR)/locator.out 2>&1 &
+ifeq ($(START_MODE),standalone)
+	@$(GFSH) -e "start locator --name=test-locator --dir=$(LOCATOR_DIR) --port=$(LOCATOR_PORT) \
+	  $(if $(security_on),--security-properties-file=$(SECURITY_FILE)) \
+	  --J=-Xmx512m --J=-Dgemfire.jmx-manager=true --J=-Dgemfire.jmx-manager-start=true \
+	  --J=-Dgemfire.jmx-manager-port=$(JMX_PORT) --J=-Dgemfire.jmx-manager-hostname-for-clients=localhost \
+	  --J=-Dgemfire.http-service-port=0" > $(TEST_DIR)/locator.out 2>&1
+else
+	@JAVA_OPTS=-Xmx512m nohup "$(EMBEDDED_LAUNCHER)" "$(TEST_DIR)/locator.properties" > $(TEST_DIR)/locator.out 2>&1 &
+endif
 	@for i in $$(seq 1 60); do \
 	  if $(call port_open,$(JMX_PORT)); then echo "✓ Locator started (SSL=$(SSL)). Log: $(LOCATOR_DIR)/test-locator.log"; exit 0; fi; \
 	  sleep 1; \
@@ -128,7 +158,7 @@ start-locator: build test-config ## Start the test cluster's locator, with the c
 start-servers: check-env test-config ## Start the test cluster's servers (SERVER_COUNT of them)
 	@for i in $$(seq 0 $$(($(SERVER_COUNT) - 1))); do \
 	  mkdir -p $(TEST_DIR)/server-$$i; \
-	  $(GFSH) -e "start server --name=test-server-$$i --dir=$(TEST_DIR)/server-$$i \
+	  $(GFSH) -e "start server --name=test-server-$$i --dir=$(TEST_DIR)/server-$$i $(if $(filter embedded,$(START_MODE)),--bind-address=127.0.0.1) \
 	    --locators=localhost[$(LOCATOR_PORT)] --server-port=$$(($(SERVER_PORT_BASE) + i)) \
 	    $(if $(security_on),--security-properties-file=$(SECURITY_FILE)) --J=-Xmx512m --J=-Dgemfire.http-service-port=0" \
 	    | grep "is currently online" >/dev/null || { echo "✘ test-server-$$i didn't start. See $(TEST_DIR)/server-$$i"; exit 1; }; \
@@ -165,11 +195,11 @@ report: ## Show the newest report the test cluster wrote
 
 .PHONY: verify
 verify: ## Check the newest report against sample-output.json and the test cluster
-	@scripts/verify-report.sh "$$(ls -t $(REPORT_DIR)/*.json 2>/dev/null | head -1)" $(SERVER_COUNT) $(SSL)
+	@test-support/scripts/verify-report.sh "$$(ls -t $(REPORT_DIR)/*.json 2>/dev/null | head -1)" $(SERVER_COUNT) $(SSL)
 
 .PHONY: verify-upload
 verify-upload: ## Check the newest report was uploaded to the local SeaweedFS unchanged
-	@scripts/verify-upload.sh "$$(ls -t $(REPORT_DIR)/*.json 2>/dev/null | head -1)" \
+	@test-support/scripts/verify-upload.sh "$$(ls -t $(REPORT_DIR)/*.json 2>/dev/null | head -1)" \
 	  "$(S3_ENDPOINT)/$(S3_BUCKET)/nightly-stats/$(TEST_ENV)/$(TEST_CLUSTER_NAME)" "$(S3_ACCESS_KEY):$(S3_SECRET_KEY)"
 
 .PHONY: s3-up
@@ -218,6 +248,9 @@ test-config: $(if $(ssl_on),certs)
 	  echo "LOCATOR_PORT=$(LOCATOR_PORT)"; \
 	  echo "JMX_MANAGER_PORT=$(JMX_PORT)"; \
 	  echo "LOG_DIRECTORY=$(LOCATOR_DIR)"; \
+	  echo "BIND_ADDR=127.0.0.1"; \
+	  echo "LOCATOR_HOST_NAME_FOR_CLIENTS=localhost"; \
+	  echo "CACHE_SERVER_PORT=0"; \
 	  echo "NIGHTLY_STATS_RUN_ON_STARTUP=true"; \
 	  echo "gemfire.http-service-port=0"; \
 	  echo "gemfire.jmx-manager-hostname-for-clients=localhost"; \

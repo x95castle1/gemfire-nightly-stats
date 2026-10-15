@@ -1,1 +1,5 @@
 rootProject.name = 'gemfire-nightly-stats'
+
+include '01-embedded-locator', '02-standalone-jmx'
+project(':01-embedded-locator').projectDir = file('examples/01-embedded-locator')
+project(':02-standalone-jmx').projectDir = file('examples/02-standalone-jmx')

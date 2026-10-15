@@ -1,0 +1,37 @@
+# Local S3 (SeaweedFS) for the nightly stats upload. Start it with `make s3-up`, which creates
+# .env from .env.example on first use, or with `docker compose up -d` once .env exists.
+# Ports are bound to 127.0.0.1 only:
+#   S3 API    http://localhost:8333   (keys: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in .env)
+#   Admin UI  http://localhost:23646  (login: WEED_ADMIN_USER / WEED_ADMIN_PASSWORD in .env)
+
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    # mini: master, volume, filer, S3 and Admin UI in one process
+    command:
+      - mini
+      - -dir=/data
+      - -ip=seaweedfs
+      - -ip.bind=0.0.0.0
+      - -webdav=false
+      - -master.telemetry=false
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID in .env}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Set AWS_SECRET_ACCESS_KEY in .env}
+      WEED_ADMIN_USER: ${WEED_ADMIN_USER:-admin}
+      WEED_ADMIN_PASSWORD: ${WEED_ADMIN_PASSWORD:?Set WEED_ADMIN_PASSWORD in .env}
+      S3_BUCKET: ${S3_BUCKET:-gemfire-stats}
+    ports:
+      - "127.0.0.1:${S3_PORT:-8333}:8333"
+      - "127.0.0.1:${ADMIN_UI_PORT:-23646}:23646"
+    volumes:
+      - seaweedfs-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8333/readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    restart: unless-stopped
+
+volumes:
+  seaweedfs-data:

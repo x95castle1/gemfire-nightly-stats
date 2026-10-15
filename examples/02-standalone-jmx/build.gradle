@@ -1,0 +1,59 @@
+plugins {
+    id 'java'
+    id 'distribution'
+}
+
+group = 'com.example.gemfire'
+version = '0.0.1-SNAPSHOT'
+
+def gemfireHome = System.getenv('GEMFIRE_HOME')
+if (!gemfireHome) {
+    throw new GradleException('GEMFIRE_HOME is not set. Point it at a GemFire install.')
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // GemFire provides the runtime libraries; the distribution contains this example's code.
+    compileOnly fileTree(dir: "${gemfireHome}/lib", include: '*.jar')
+    testImplementation fileTree(dir: "${gemfireHome}/lib", include: '*.jar')
+    testImplementation platform('org.junit:junit-bom:5.13.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'failed'
+        exceptionFormat = 'full'
+    }
+}
+
+jar {
+    archiveFileName = "${project.name}.jar"
+}
+
+distributions {
+    main {
+        contents {
+            from(tasks.named('jar')) { into 'lib' }
+            from('scripts/collect-stats.sh') {
+                into 'bin'
+                filePermissions { unix('rwxr-xr-x') }
+            }
+            from('standalone.properties.example')
+            from('README.md')
+            from('report-reference.md')
+            from('sample-output.json')
+            from('docker-compose.yml')
+            from('.env.example')
+        }
+    }
+}

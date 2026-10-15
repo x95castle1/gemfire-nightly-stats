@@ -1,58 +1,23 @@
 plugins {
-    id 'java'
-    id 'distribution'
+    id 'base'
 }
 
-group = 'com.example.gemfire'
-version = '0.0.1-SNAPSHOT'
-
-def gemfireHome = System.getenv('GEMFIRE_HOME')
-if (!gemfireHome) {
-    throw new GradleException('GEMFIRE_HOME is not set. Point it at a GemFire install, e.g. export GEMFIRE_HOME=~/dev/vmware-gemfire-10.3.2')
+tasks.named('build') {
+    dependsOn ':01-embedded-locator:build', ':02-standalone-jmx:build'
 }
 
-repositories {
-    // Only for the test libraries: the jar itself has no dependencies
-    mavenCentral()
+tasks.register('test') {
+    group = 'verification'
+    description = 'Run both self-contained example test suites.'
+    dependsOn ':01-embedded-locator:test', ':02-standalone-jmx:test'
 }
 
-dependencies {
-    // The locator provides GemFire at runtime, so compile against the local install's jars
-    compileOnly fileTree(dir: "${gemfireHome}/lib", include: '*.jar')
-
-    // The collector's classes load GemFire and log4j classes, so tests need the jars at runtime too
-    testImplementation fileTree(dir: "${gemfireHome}/lib", include: '*.jar')
-    testImplementation platform('org.junit:junit-bom:5.13.4')
-    testImplementation 'org.junit.jupiter:junit-jupiter'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+tasks.named('clean') {
+    dependsOn ':01-embedded-locator:clean', ':02-standalone-jmx:clean'
 }
 
-test {
-    useJUnitPlatform()
-    testLogging {
-        events 'failed'
-        exceptionFormat = 'full'
-    }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.release = 17
-}
-
-jar {
-    archiveFileName = 'gemfire-nightly-stats.jar'
-}
-
-distributions {
-    main {
-        contents {
-            from(jar) { into 'lib' }
-            from('scripts/collect-stats.sh') {
-                into 'bin'
-                filePermissions { unix('rwxr-xr-x') }
-            }
-            from('standalone.properties.example')
-            from('README.md')
-        }
-    }
+tasks.register('assembleDist') {
+    group = 'distribution'
+    description = 'Build ZIP and TAR distributions for both examples.'
+    dependsOn ':01-embedded-locator:assembleDist', ':02-standalone-jmx:assembleDist'
 }
