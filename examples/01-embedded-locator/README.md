@@ -12,6 +12,14 @@ the final `waitOnLocator()` call.
 Source: `src/main/java/com/example/gemfire/stats/embedded/NightlyStatsLocatorStart.java`.
 This directory contains all collector, JSON, storage and S3 delivery source code, its own Gradle build,
 wrapper, tests and example configuration. It can be copied out and used as a separate project.
+Filenames use `<CLUSTER_NAME>-<timestamp>-<uuid>.json`, for example
+`test-cluster-2026-10-15T143000.123-0500-86b3f35e-2451-4a80-a773-eec6f465013b.json`.
+The timestamp contains local date/time, milliseconds and a numeric UTC offset. The random UUID
+keeps separate runs unique even if their clocks return the same instant. Earlier reports and
+objects are preserved, and legacy `<CLUSTER_NAME>-<yyyy-MM-dd>.json` files remain readable by
+status, uploads and date-filtered exports. The JSON `collected_at` value still comes from the
+JMX manager's clock. Reports remain until an operator removes them.
+
 See the [report reference](report-reference.md) and [sample output](sample-output.json).
 
 ## Run from a checkout
@@ -51,9 +59,12 @@ Extra JVM options can be supplied through `JAVA_OPTS`.
 - `NIGHTLY_STATS_TIME` defaults to `02:00` in the locator JVM's local timezone. The next
   execution time is recalculated after every run, including across daylight-saving changes.
 - `NIGHTLY_STATS_RUN_ON_STARTUP=true` also queues a report 60 seconds after startup.
-- Output is `<NIGHTLY_STATS_DIR>/<CLUSTER_NAME>-<yyyy-MM-dd>.json`;
+- `COLLECTION_INTERVAL_SECONDS=60` replaces the daily schedule with collection every minute
+  after the previous collection/upload completes. `0` (default) keeps the nightly schedule.
+  With the startup flag enabled, the first run still waits 60 seconds; otherwise it waits the interval.
+- Output is `<NIGHTLY_STATS_DIR>/<CLUSTER_NAME>-<timestamp>-<uuid>.json`;
   `NIGHTLY_STATS_DIR` defaults to `<LOG_DIRECTORY>/nightly-stats`.
-- Relative paths resolve from the process working directory. A successful run replaces that day's report.
+- Relative paths resolve from the process working directory. Each successful run creates a separate report; previous files are preserved.
 - Collection and upload errors are logged without stopping the locator. The main thread waits on the locator.
 - When S3 delivery is enabled, pending reports are retried on restart and after report collection.
   See the [upload reference](report-reference.md#uploading-to-s3).
@@ -63,7 +74,7 @@ A denied TLS lookup is logged and produces `tls: null`; validate permissions wit
 
 ## Distribution
 
-From this directory, run `./gradlew assembleDist` or `make embedded-dist`.
+From this directory, run `./gradlew assembleDist` or `make dist`.
 ZIP and TAR files appear in `build/distributions/`.
 Each includes `lib/01-embedded-locator.jar`, `bin/start-locator.sh`,
 example properties, report reference, sample output and this README.
@@ -79,12 +90,40 @@ bin/start-locator.sh locator.properties
 `./gradlew test` runs collection, scheduling, storage and delivery tests.
 `make test` starts this locator, two servers and three regions, waits for its startup report,
 verifies the report, and stops the cluster. SSL is enabled by default; `SSL=false` disables it.
-Add `S3=true` to verify an upload to local SeaweedFS.
+S3 delivery is checked by default; `S3=false` disables uploads while still starting SeaweedFS.
 
-Default test ports are 20334, 21099 and 40504/40505. Override `LOCATOR_PORT`, `JMX_PORT`,
-`SERVER_PORT_BASE` and `TEST_DIR` as needed. `make start`, `make status`, `make report`,
-`make logs` and `make stop` operate the embedded test cluster manually.
+Default local environment ports are 20334, 21099 and 40504/40505. Integration tests default to 21334, 22099 and 41504/41505. Override `LOCATOR_PORT`, `JMX_PORT`,
+`SERVER_PORT_BASE` and `TEST_DIR` as needed. `make start`, `make status`, `make logs` and `make stop` manage the complete local environment.
+`make start` includes SeaweedFS and generates a working configuration; `make run` reuses that environment.
+The embedded startup report is scheduled after 60 seconds. Use `PROPERTIES=file` for a custom foreground locator.
 
 If no report appears, check `NIGHTLY_STATS_RUN_ON_STARTUP` or the next nightly time and inspect
 the locator log for `Nightly stats`. Test startup output is in `.test-cluster/locator.out`.
 For remote clients, make the JMX manager's advertised RMI hostname reachable and consistent with its certificate.
+
+## SeaweedFS demo controls
+
+`make start` and `make run` use `fzf` to choose **Local files only** or
+**Local files and SeaweedFS**. Set `S3=false` or `S3=true` to skip that picker.
+`make run` then asks for the interval: normal schedule, every 30 seconds, every minute,
+every 5 minutes or every 15 minutes. Normal means nightly at the configured time (default 02:00)
+for embedded collection, or once and exit for standalone. Every minute is a useful demo default.
+Set `COLLECTION_INTERVAL_SECONDS` to skip the interval picker, including for a custom interval.
+Cancelling any picker leaves the environment alone. `make start` keeps the saved interval or its default.
+Reports are always saved locally, and the environment always includes SeaweedFS.
+With `PROPERTIES=file`, delivery is overridden in a private temporary copy; your file is preserved.
+S3 delivery then requires a destination and credentials in your supplied properties.
+
+The default Admin UI login is **admin / admin**. Run `make admin` to open its configured URL
+in your browser. `make stop` keeps saved data; `make clean` permanently deletes the SeaweedFS
+volume and its objects, plus local build and test files.
+
+For a minute-by-minute demo, run `make start COLLECTION_INTERVAL_SECONDS=60`.
+The interval is saved; the next `make run` lets you choose again. Changing delivery or interval while running restarts
+its locator and servers, preserving data. Use `COLLECTION_INTERVAL_SECONDS=0` to return to nightly
+collection. Each run creates a separate JSON file and, if enabled, a separate SeaweedFS object.
+
+The local runner uses `lsof` and GemFire PID files to recognize its own locator and servers,
+even if a startup marker is missing. A healthy environment is reused; an incomplete one is
+restarted, preserving reports and SeaweedFS data. Restarting clears in-memory region contents.
+Ports owned by unrelated processes are reported as conflicts and are left alone.

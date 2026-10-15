@@ -55,9 +55,9 @@ If `S3_ENDPOINT` is set, the collector also uploads each report to that S3-compa
 | `S3_PREFIX` | `nightly-stats` | Start of every object key |
 | `S3_ACCESS_KEY`, `S3_SECRET_KEY` | the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables | So keys can stay out of the properties file |
 
-- Each report goes to `<S3_PREFIX>/<ENV>/<CLUSTER_NAME>/<CLUSTER_NAME>-<yyyy-MM-dd>.json`, e.g. `nightly-stats/local/test-cluster/test-cluster-2026-10-08.json`. Requests are path-style (`<endpoint>/<bucket>/<key>`). With upload on, `ENV` and `CLUSTER_NAME` may only contain letters, numbers, dots, underscores and hyphens.
-- Each successful upload writes a receipt to `<NIGHTLY_STATS_DIR>/.uploaded/`: the destination, the object key and the file's SHA-256. A report without a matching receipt is pending. That covers a failed upload, a same-day rerun that changed the file, and a new endpoint or bucket.
-- Pending reports are uploaded, newest first, when the locator starts and after every daily run, up to 32 per pass. A pass stops at the first failure, so while S3 is down each pass costs one failed request. A failure is logged (`Nightly stats upload failed`) and never stops the locator.
+- Each report goes to `<S3_PREFIX>/<ENV>/<CLUSTER_NAME>/<CLUSTER_NAME>-<timestamp>-<uuid>.json`, e.g. `nightly-stats/local/test-cluster/test-cluster-2026-10-15T143000.123-0500-86b3f35e-2451-4a80-a773-eec6f465013b.json`. Requests are path-style (`<endpoint>/<bucket>/<key>`). With upload on, `ENV` and `CLUSTER_NAME` may only contain letters, numbers, dots, underscores and hyphens.
+- Each successful upload writes a receipt to `<NIGHTLY_STATS_DIR>/.uploaded/`: the destination, the object key and the file's SHA-256. A report without a matching receipt is pending. Every collection has its own filename, object key and receipt. Failed uploads are retried under that same key; new collections use new keys. Legacy date-only reports remain supported.
+- Pending reports are uploaded, newest first, when the locator starts and after every collection, up to 32 per pass. A pass stops at the first failure, so while S3 is down each pass costs one failed request. A failure is logged (`Nightly stats upload failed`) and never stops the locator.
 - To upload everything again, e.g. after emptying the bucket, delete `.uploaded/` and restart the locator.
 
 ### Local SeaweedFS
@@ -67,13 +67,14 @@ If `S3_ENDPOINT` is set, the collector also uploads each report to that S3-compa
 - S3 API: `http://localhost:8333`. It creates the bucket on startup.
 - Admin UI: http://localhost:23646. Browse the reports under Object Store → Buckets.
 
-The S3 keys and the Admin UI login are in `.env`, which git ignores. `make s3-up` creates it from `.env.example` the first time.
+The S3 keys and the Admin UI login are in `.env`, which git ignores. `make start` creates it from `.env.example` the first time.
 
 ```sh
-make s3-up            # start SeaweedFS (creates .env on first use)
-make test S3=true     # the end-to-end test, plus: the locator uploads its report, then curl downloads it and compares
-make s3-ls            # list the bucket
-make s3-down          # stop SeaweedFS, keeping its data (docker compose down -v deletes it)
+make start           # start locator, servers, regions and SeaweedFS
+make test            # validate collection and S3 delivery in an isolated environment
+make admin           # open the Admin UI (default login: admin/admin)
+make stop            # stop services, preserving saved reports and SeaweedFS data
+make clean           # permanently delete builds, test files and SeaweedFS volume
 ```
 
 To upload from your own locator, add `S3_ENDPOINT=http://localhost:8333` and `S3_BUCKET=gemfire-stats` to the example configuration, and pass the keys from `.env` as properties or environment variables.

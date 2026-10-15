@@ -2,10 +2,10 @@ package com.example.gemfire.stats.embedded;
 
 import java.nio.file.Path;
 import java.time.Clock;
-import java.time.LocalDate;
+import java.time.ZonedDateTime;
 import java.util.Map;
 
-/** Collects metrics and writes a daily report. */
+/** Collects metrics and writes a unique report. */
 public final class ReportJob {
     @FunctionalInterface
     public interface Source {
@@ -22,6 +22,6 @@ public final class ReportJob {
 
     public Path collect(Source source) throws Exception {
         Map<String, Object> report = source.collect();
-        return store.write(report, LocalDate.now(clock));
+        return store.write(report, ZonedDateTime.now(clock));
     }
 }

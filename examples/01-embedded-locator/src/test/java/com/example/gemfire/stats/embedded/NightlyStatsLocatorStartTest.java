@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import org.apache.geode.distributed.LocatorLauncher;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -99,5 +101,41 @@ class NightlyStatsLocatorStartTest {
         properties.setProperty("quoted", "\"one\"two\"");
         assertEquals("onetwo", NightlyStatsLocatorStart.getPropertyAndReplaceQuotes("quoted", properties));
         assertNull(NightlyStatsLocatorStart.getPropertyAndReplaceQuotes("missing", properties));
+    }
+
+    @Test
+    void intervalReplacesDailyAndStartupJobsWithOneRepeatingJob() {
+        Properties properties = settings();
+        properties.setProperty("COLLECTION_INTERVAL_SECONDS", "60");
+        properties.setProperty("NIGHTLY_STATS_RUN_ON_STARTUP", "true");
+        ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(1);
+        try {
+            new NightlyStatsLocatorStart(properties).scheduleReports(scheduler);
+            assertEquals(1, scheduler.getQueue().size());
+            var task = (java.util.concurrent.RunnableScheduledFuture<?>) scheduler.getQueue().peek();
+            assertTrue(task.isPeriodic());
+            assertTrue(task.getDelay(TimeUnit.SECONDS) >= 55);
+            assertTrue(task.getDelay(TimeUnit.SECONDS) <= 60);
+        } finally {
+            scheduler.shutdownNow();
+        }
+    }
+
+    @Test
+    void zeroIntervalKeepsTheDailyScheduleAndInvalidIntervalsFailBeforeStartup() {
+        Properties properties = settings();
+        properties.setProperty("COLLECTION_INTERVAL_SECONDS", "0");
+        ScheduledThreadPoolExecutor scheduler = new ScheduledThreadPoolExecutor(1);
+        try {
+            new NightlyStatsLocatorStart(properties).scheduleReports(scheduler);
+            assertEquals(1, scheduler.getQueue().size());
+            assertFalse(((java.util.concurrent.RunnableScheduledFuture<?>) scheduler.getQueue().peek()).isPeriodic());
+        } finally {
+            scheduler.shutdownNow();
+        }
+        for (String invalid : new String[] {"-1", "abc", "1.5"}) {
+            properties.setProperty("COLLECTION_INTERVAL_SECONDS", invalid);
+            assertThrows(IllegalArgumentException.class, () -> new NightlyStatsLocatorStart(properties));
+        }
     }
 }

@@ -1,4 +1,4 @@
-# Local S3 (SeaweedFS) for the nightly stats upload. Start it with `make s3-up`, which creates
+# Local S3 (SeaweedFS) for the nightly stats upload. Start it with `make start`, which creates
 # .env from .env.example on first use, or with `docker compose up -d` once .env exists.
 # Ports are bound to 127.0.0.1 only:
 #   S3 API    http://localhost:8333   (keys: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in .env)
@@ -19,7 +19,7 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID in .env}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Set AWS_SECRET_ACCESS_KEY in .env}
       WEED_ADMIN_USER: ${WEED_ADMIN_USER:-admin}
-      WEED_ADMIN_PASSWORD: ${WEED_ADMIN_PASSWORD:?Set WEED_ADMIN_PASSWORD in .env}
+      WEED_ADMIN_PASSWORD: ${WEED_ADMIN_PASSWORD:-admin}
       S3_BUCKET: ${S3_BUCKET:-gemfire-stats}
     ports:
       - "127.0.0.1:${S3_PORT:-8333}:8333"

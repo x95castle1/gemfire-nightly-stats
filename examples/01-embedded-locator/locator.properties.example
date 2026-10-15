@@ -33,12 +33,15 @@ CLUSTER_SSL_KEY_STORE_PASSWORD=
 SSL_USE_DEFAULT_CONTEXT=false
 
 # Nightly stats
-# Where the daily JSON files go. Default: <LOG_DIRECTORY>/nightly-stats
+# Where the individual timestamped JSON files go. Default: <LOG_DIRECTORY>/nightly-stats
 # NIGHTLY_STATS_DIR=
 # Local time of the daily run, HH:mm
 NIGHTLY_STATS_TIME=02:00
 # Also run once, 60 seconds after startup (handy for testing)
 NIGHTLY_STATS_RUN_ON_STARTUP=false
+# Optional demo interval in seconds: 60 repeats every minute after the previous run completes.
+# 0 keeps the daily schedule above. A positive value replaces the daily schedule.
+COLLECTION_INTERVAL_SECONDS=0
 
 # Upload each report to an S3-compatible store (SeaweedFS, MinIO, AWS S3) as well as writing it to
 # disk. Off unless S3_ENDPOINT is set. The object key is <S3_PREFIX>/<ENV>/<CLUSTER_NAME>/<file name>.

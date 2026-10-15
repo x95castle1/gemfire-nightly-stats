@@ -48,6 +48,7 @@ public class NightlyStatsLocatorStart implements Runnable {
     private final Path workingDirectory;
     private final Path outputDirectory;
     private final LocalTime runAt;
+    private final int intervalSeconds;
     /** null when S3_ENDPOINT isn't set */
     private final ReportDelivery delivery;
     private final ReportJob job;
@@ -60,6 +61,10 @@ public class NightlyStatsLocatorStart implements Runnable {
         this.workingDirectory = Paths.get(required("LOG_DIRECTORY"));
         this.outputDirectory = Paths.get(get("NIGHTLY_STATS_DIR", workingDirectory.resolve("nightly-stats").toString()));
         this.runAt = LocalTime.parse(get("NIGHTLY_STATS_TIME", "02:00"));
+        this.intervalSeconds = Integer.parseInt(get("COLLECTION_INTERVAL_SECONDS", "0"));
+        if (intervalSeconds < 0) {
+            throw new IllegalArgumentException("COLLECTION_INTERVAL_SECONDS must be zero or a positive integer");
+        }
         this.delivery = settings.delivery(outputDirectory, env, clusterName,
                 get("S3_ENDPOINT", null) == null ? "local" : "s3", true);
         this.job = new ReportJob(new ReportStore(outputDirectory, clusterName), Clock.systemDefaultZone());
@@ -246,12 +251,23 @@ public class NightlyStatsLocatorStart implements Runnable {
             thread.setDaemon(true);
             return thread;
         });
+        scheduleReports(scheduler);
+    }
+
+    void scheduleReports(ScheduledExecutorService scheduler) {
         if (delivery != null) {
             logger.info("Nightly stats reports will also be uploaded to {}", delivery.location());
             // Catch up on reports an earlier run couldn't upload, e.g. while S3 was down
             scheduler.execute(this::uploadPending);
         }
-        if (Boolean.parseBoolean(get("NIGHTLY_STATS_RUN_ON_STARTUP", "false"))) {
+        boolean startup = Boolean.parseBoolean(get("NIGHTLY_STATS_RUN_ON_STARTUP", "false"));
+        if (intervalSeconds > 0) {
+            long initialDelay = startup ? STARTUP_RUN_DELAY.toSeconds() : intervalSeconds;
+            logger.info("Stats collection repeats with {} seconds between runs", intervalSeconds);
+            scheduler.scheduleWithFixedDelay(this::writeReport, initialDelay, intervalSeconds, TimeUnit.SECONDS);
+            return;
+        }
+        if (startup) {
             // Give servers time to join before the first run
             scheduler.schedule(this::writeReport, STARTUP_RUN_DELAY.toSeconds(), TimeUnit.SECONDS);
         }

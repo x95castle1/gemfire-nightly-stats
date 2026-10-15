@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -37,13 +38,29 @@ class ReportDeliveryTest {
     }
 
     @Test
-    void aChangedReportReplacesTheSameObject() throws Exception {
+    void aManuallyEditedLegacyReportIsUploadedAgain() throws Exception {
         Path report = report("2026-10-07", "{\"value\":1}");
         delivery("http://s3/bucket-a", this::capture).uploadPending();
         Files.writeString(report, "{\"value\":2}");
         assertEquals(1, delivery("http://s3/bucket-a", this::capture).uploadPending());
         assertEquals(keys.get(0), keys.get(1));
         assertArrayEquals(Files.readAllBytes(report), contents.get(1));
+    }
+
+    @Test
+    void sameTimeCollectionsUploadAsSeparateObjectsAndKeepTheirReceipts() throws Exception {
+        ReportStore store = new ReportStore(directory, "test-cluster");
+        ZonedDateTime time = ZonedDateTime.parse("2026-10-15T12:00:00Z");
+        Path first = store.write(java.util.Map.of("value", 1), time);
+        Path second = store.write(java.util.Map.of("value", 2), time);
+        ReportDelivery delivery = delivery("http://s3/bucket-a", this::capture);
+        assertEquals(2, delivery.uploadPending());
+        assertEquals(2, new java.util.HashSet<>(keys).size());
+        assertTrue(keys.contains(KEY_PREFIX + "/" + first.getFileName()));
+        assertTrue(keys.contains(KEY_PREFIX + "/" + second.getFileName()));
+        assertTrue(Files.exists(receipt(first)));
+        assertTrue(Files.exists(receipt(second)));
+        assertEquals(0, delivery("http://s3/bucket-a", this::capture).uploadPending());
     }
 
     @Test

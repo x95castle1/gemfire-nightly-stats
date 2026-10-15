@@ -19,6 +19,7 @@ JMX_TIMEOUT_SECONDS=120
 # The report directory is <REPORT_DIR>/<ENV>/<CLUSTER_NAME>.
 # Relative paths are resolved from the command's working directory.
 REPORT_DIR=reports
+# Timezone for the unique filename timestamp and its export-filter date.
 # Default: the collector machine's timezone. Does not change the UTC collected_at field.
 # REPORT_TIMEZONE=America/Toronto
 # Warn when storage has less than this many MiB available. Reports are never automatically deleted.

@@ -12,7 +12,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
- * Uploads the daily reports in a directory that haven't been uploaded yet. Each successful upload
+ * Uploads the reports in a directory that haven't been uploaded yet. Each successful upload
  * writes a receipt to {@code <directory>/.uploaded/} holding the destination, object key and SHA-256
  * of the file, so a report is uploaded again only when it, or where it goes, changes. A failed upload
  * leaves no receipt, so the next pass retries it.
@@ -85,7 +85,7 @@ public final class ReportDelivery {
         return uploaded;
     }
 
-    /** This cluster's daily reports, newest first. Skips temporary files, symbolic links and other clusters' reports. */
+    /** This cluster's reports, newest first. Skips temporary files, symbolic links and other clusters' reports. */
     List<Path> reports() throws IOException {
         return store.reports();
     }

@@ -7,6 +7,8 @@ wrapper, tests and example configuration. It can be copied out and used as a sep
 Run the commands below from this example directory.
 The supplied properties file retains `DELIVERY_MODE=s3`; configure its S3 destination and credentials,
 or explicitly change it to `DELIVERY_MODE=local` for a local-only first run.
+For a generated local configuration, use `make start` followed by `make run`; this brings up
+a normal locator, two servers, sample regions and SeaweedFS. `make stop` stops all of them while preserving data.
 
 
 The standalone command runs in its own Java process and connects to an **existing** cluster's JMX manager. It collects the same report as the embedded locator example. Start with local files while S3 is unavailable or awaiting approval, then upload the accumulated reports whenever the destination is ready.
@@ -21,9 +23,17 @@ scripts/collect-stats.sh collect --config standalone.properties
 scripts/collect-stats.sh status --config standalone.properties
 ```
 
-`collect` runs once and exits. Its report goes to `<REPORT_DIR>/<ENV>/<CLUSTER_NAME>/<CLUSTER_NAME>-<yyyy-MM-dd>.json`. `REPORT_DIR` defaults to `reports`. Both labels must start with a letter or number and contain only letters, numbers, dots, underscores or hyphens. These directories preserve report identity for later uploads. A second collection on the same day replaces that day's report, matching the embedded collector's behavior. The JSON layout and S3 key layout are unchanged.
+`collect` runs once and exits. Its report goes to `<REPORT_DIR>/<ENV>/<CLUSTER_NAME>/<CLUSTER_NAME>-<timestamp>-<uuid>.json`. `REPORT_DIR` defaults to `reports`. Both labels must start with a letter or number and contain only letters, numbers, dots, underscores or hyphens. These directories preserve report identity for later uploads. Each collection creates a unique file, including multiple collections on the same day or at the same instant. The JSON layout and S3 prefix are unchanged; each file becomes a separate S3 object.
 
-Relative paths are resolved from the command's working directory. `REPORT_TIMEZONE` controls the daily filename; its default is the collector machine's timezone. `collected_at` still comes from the manager's clock and is always UTC. Reports are written through a temporary file and an atomic rename. Each command takes an operating-system file lock on the cluster's report directory; overlapping commands fail promptly. Reports and receipts are kept until an operator removes them. For containers or Kubernetes Jobs, mount persistent storage at `REPORT_DIR`.
+Filenames use `<CLUSTER_NAME>-<timestamp>-<uuid>.json`, for example
+`test-cluster-2026-10-15T143000.123-0500-86b3f35e-2451-4a80-a773-eec6f465013b.json`.
+The timestamp contains local date/time, milliseconds and a numeric UTC offset. The random UUID
+keeps separate runs unique even if their clocks return the same instant. Earlier reports and
+objects are preserved, and legacy `<CLUSTER_NAME>-<yyyy-MM-dd>.json` files remain readable by
+status, uploads and date-filtered exports. The JSON `collected_at` value still comes from the
+JMX manager's clock. Reports remain until an operator removes them.
+
+Relative paths are resolved from the command's working directory. `REPORT_TIMEZONE` controls the filename timestamp and its date used for export filters; its default is the collector machine's timezone. `collected_at` still comes from the manager's clock and is always UTC. Reports are written completely to a temporary file, then renamed to a unique filename without replacing an existing report. Each command takes an operating-system file lock on the cluster's report directory; overlapping commands fail promptly. Reports and receipts are kept until an operator removes them. For containers or Kubernetes Jobs, mount persistent storage at `REPORT_DIR`.
 
 ### Local storage and manual handoff
 
@@ -66,7 +76,7 @@ Schedule `collect` with cron, a systemd timer, or a Kubernetes CronJob. For exam
 0 2 * * * cd /opt/gemfire-stats-standalone && GEMFIRE_HOME=/opt/gemfire scripts/collect-stats.sh collect --config /etc/gemfire-stats/cluster.properties
 ```
 
-The scheduler determines when the job runs and which timezone its schedule uses. `REPORT_TIMEZONE` controls filenames only. Avoid scheduling the embedded collector and standalone collector to publish the same cluster/day to the same S3 key unless overwriting is intended.
+The scheduler determines when the job runs and which timezone its schedule uses. `REPORT_TIMEZONE` controls filenames only. Both collectors use unique filenames, so publishing to the same cluster prefix retains each individual collection.
 
 The commands write JSON results to stdout and diagnostics to stderr. Exit statuses are:
 
@@ -101,5 +111,37 @@ To include a real S3 regression, run:
 make test S3=true SSL=true AUTH=true
 ```
 
-This starts the local SeaweedFS service, collects locally, then backfills the saved report with JMX pointed at an unreachable address. It downloads each uploaded version with curl's independent SigV4 signing and compares the bytes. It also checks collection with S3 enabled, unchanged reports being skipped, optional and required delivery during an outage, and recovery of a changed report. The outage is simulated by directing this collector to a closed loopback port; the shared S3 service keeps running. Each run uses a separate `regression/<test-run>/` S3 prefix. The GemFire test cluster is stopped afterward; reports and JSON run summaries remain in the printed test directory, and SeaweedFS stays up for inspection (`make s3-down` stops it without removing its data).
+This starts the local SeaweedFS service, collects locally, then backfills the saved report with JMX pointed at an unreachable address. It downloads each uploaded version with curl's independent SigV4 signing and compares the bytes. It also checks collection with S3 enabled, unchanged reports being skipped, optional and required delivery during an outage, and recovery of a changed report. The outage is simulated by directing this collector to a closed loopback port; the shared S3 service keeps running. Each run uses a separate `regression/<test-run>/` S3 prefix. The GemFire test cluster is stopped afterward; reports and JSON run summaries remain in the printed test directory, and SeaweedFS is stopped afterward, with its data preserved for inspection.
 
+
+## SeaweedFS demo controls
+
+`make start` and `make run` use `fzf` to choose **Local files only** or
+**Local files and SeaweedFS**. Set `S3=false` or `S3=true` to skip that picker.
+`make run` then asks for the interval: normal schedule, every 30 seconds, every minute,
+every 5 minutes or every 15 minutes. Normal means nightly at the configured time (default 02:00)
+for embedded collection, or once and exit for standalone. Every minute is a useful demo default.
+Set `COLLECTION_INTERVAL_SECONDS` to skip the interval picker, including for a custom interval.
+Cancelling any picker leaves the environment alone. `make start` keeps the saved interval or its default.
+Reports are always saved locally, and the environment always includes SeaweedFS.
+With `PROPERTIES=file`, delivery is overridden in a private temporary copy; your file is preserved.
+S3 delivery then requires a destination and credentials in your supplied properties.
+
+The default Admin UI login is **admin / admin**. Run `make admin` to open its configured URL
+in your browser. `make stop` keeps saved data; `make clean` permanently deletes the SeaweedFS
+volume and its objects, plus local build and test files.
+
+For a minute-by-minute demo, run `make run COLLECTION_INTERVAL_SECONDS=60`.
+This runs collection immediately in a separate JVM, then waits 60 seconds before the next run.
+Press Ctrl-C to end the loop; the cluster stays running. `make start` only prepares the environment.
+The interval is remembered; the next `make run` lets you choose again.
+`COLLECTION_INTERVAL_SECONDS=0` restores one-shot `make run`.
+Collection/upload failures retry after the interval; configuration errors stop the loop.
+Changing delivery regenerates collector settings without restarting the cluster. Each run
+creates a separate JSON file and, if enabled, a separate SeaweedFS object. The direct Java CLI stays
+one-shot and can still be scheduled with cron.
+
+The local runner uses `lsof` and GemFire PID files to recognize its own locator and servers,
+even if a startup marker is missing. A healthy environment is reused; an incomplete one is
+restarted, preserving reports and SeaweedFS data. Restarting clears in-memory region contents.
+Ports owned by unrelated processes are reported as conflicts and are left alone.

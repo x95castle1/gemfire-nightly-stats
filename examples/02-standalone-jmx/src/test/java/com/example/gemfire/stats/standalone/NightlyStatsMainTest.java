@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -74,7 +75,7 @@ class NightlyStatsMainTest {
         Properties p = settings();
         p.remove("JMX_HOST");
         NightlyStatsMain.Source unused = ignored -> { throw new AssertionError("Offline command connected to JMX"); };
-        store().write(report(null), LocalDate.parse("2026-10-15"));
+        store().write(report(null), LocalDate.parse("2026-10-15").atStartOfDay(ZoneOffset.UTC));
         Result status = run("status", p, unused);
         assertEquals(0, status.code(), status.error());
         assertEquals(1L, status.summary().get("saved_reports"));
@@ -108,7 +109,7 @@ class NightlyStatsMainTest {
             assertTrue(deferred.error().contains("Upload deferred"));
             p.setProperty("UPLOAD_REQUIRED", "true");
             assertEquals(4, run("collect", p, this::report).code());
-            assertEquals(1, store().reports().size());
+            assertEquals(2, store().reports().size());
             response.set(200);
             p.remove("JMX_HOST");
             NightlyStatsMain.Source unused = ignored -> { throw new AssertionError("Backfill connected to JMX"); };
@@ -131,7 +132,7 @@ class NightlyStatsMainTest {
         });
         server.start();
         try {
-            store().write(report(null), LocalDate.parse("2026-10-14"));
+            store().write(report(null), LocalDate.parse("2026-10-14").atStartOfDay(ZoneOffset.UTC));
             Result result = run("collect", s3Settings(server.getAddress().getPort()), ignored -> {
                 throw new IOException("Cluster unreachable");
             });
@@ -190,7 +191,7 @@ class NightlyStatsMainTest {
         });
         server.start();
         try {
-            for (int day = 13; day <= 15; day++) store().write(report(null), LocalDate.of(2026, 10, day));
+            for (int day = 13; day <= 15; day++) store().write(report(null), LocalDate.of(2026, 10, day).atStartOfDay(ZoneOffset.UTC));
             Result result = run("upload-pending", s3Settings(server.getAddress().getPort()), this::report);
             assertEquals(4, result.code(), result.error());
             assertEquals(1L, result.summary().get("uploaded"));
@@ -211,7 +212,7 @@ class NightlyStatsMainTest {
         server.start();
         try {
             for (int day = 0; day <= ReportDelivery.MAX_UPLOADS_PER_PASS; day++) {
-                store().write(report(null), LocalDate.of(2026, 1, 1).plusDays(day));
+                store().write(report(null), LocalDate.of(2026, 1, 1).plusDays(day).atStartOfDay(ZoneOffset.UTC));
             }
             Properties p = s3Settings(server.getAddress().getPort());
             p.setProperty("UPLOAD_REQUIRED", "true");

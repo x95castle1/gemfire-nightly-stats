@@ -7,20 +7,29 @@ import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.ResolverStyle;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-/** Daily reports on disk. Files and receipts are kept until an operator removes them. */
+/** Individual reports on disk. Files and receipts are kept until an operator removes them. */
 public final class ReportStore {
+    private static final DateTimeFormatter TIMESTAMP = DateTimeFormatter
+            .ofPattern("uuuu-MM-dd'T'HHmmss.SSSxx", Locale.ROOT).withResolverStyle(ResolverStyle.STRICT);
+
     final Path directory;
     final String cluster;
 
@@ -37,13 +46,14 @@ public final class ReportStore {
         this.cluster = cluster;
     }
 
-    public Path write(Map<String, Object> report, LocalDate date) throws IOException {
+    public Path write(Map<String, Object> report, ZonedDateTime timestamp) throws IOException {
         Files.createDirectories(directory);
-        Path file = directory.resolve(cluster + "-" + date + ".json");
+        Path file = directory.resolve(cluster + "-" + TIMESTAMP.format(timestamp) + "-" + UUID.randomUUID() + ".json");
         Path temporary = Files.createTempFile(directory, ".report-", ".tmp");
         try {
             Files.writeString(temporary, Json.write(report));
-            Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            // Publish the completed file under a new name. Never replace an existing report.
+            Files.move(temporary, file);
         } finally {
             Files.deleteIfExists(temporary);
         }
@@ -55,23 +65,36 @@ public final class ReportStore {
         try (var files = Files.list(directory)) {
             return files.filter(file -> Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS))
                     .filter(file -> date(file) != null)
-                    .sorted(Comparator.comparing((Path file) -> file.getFileName().toString()).reversed())
+                    .sorted(Comparator.comparing((Path file) -> timestamp(file).toInstant())
+                            .thenComparing(file -> file.getFileName().toString()).reversed())
                     .toList();
         }
     }
 
     public LocalDate date(Path file) {
+        OffsetDateTime timestamp = timestamp(file);
+        return timestamp == null ? null : timestamp.toLocalDate();
+    }
+
+    private OffsetDateTime timestamp(Path file) {
         String name = file.getFileName().toString();
         String prefix = cluster + "-";
-        if (!name.startsWith(prefix) || !name.endsWith(".json") || name.length() != prefix.length() + 15) return null;
+        if (!name.startsWith(prefix) || !name.endsWith(".json")) return null;
+        String suffix = name.substring(prefix.length(), name.length() - 5);
         try {
-            return LocalDate.parse(name.substring(prefix.length(), name.length() - 5));
-        } catch (DateTimeParseException e) {
+            // Keep existing daily reports available for status, exports and pending uploads.
+            if (suffix.length() == 10) return LocalDate.parse(suffix).atStartOfDay().atOffset(ZoneOffset.UTC);
+            int separator = suffix.length() - 37; // '-' followed by a canonical UUID
+            if (separator <= 0 || suffix.charAt(separator) != '-') return null;
+            String id = suffix.substring(separator + 1);
+            if (!UUID.fromString(id).toString().equals(id)) return null;
+            return OffsetDateTime.parse(suffix.substring(0, separator), TIMESTAMP);
+        } catch (DateTimeParseException | IllegalArgumentException e) {
             return null;
         }
     }
 
-    /** Held for the whole command, including uploads, so another process cannot replace its reports. */
+    /** Held for the whole command, including uploads, so another process cannot collect or upload concurrently. */
     public Lock lock() throws IOException {
         Files.createDirectories(directory);
         FileChannel channel = FileChannel.open(directory.resolve(".collector.lock"),
@@ -108,14 +131,14 @@ public final class ReportStore {
         throw new IOException("Report identity does not match ENV=" + env + ", CLUSTER_NAME=" + cluster);
     }
 
-    /** ZIP contains only daily reports and a SHA-256 manifest, never settings, locks or credentials. */
+    /** ZIP contains only reports and a SHA-256 manifest, never settings, locks or credentials. */
     public int export(Path output, String env, LocalDate from, LocalDate to) throws IOException {
         List<Path> selected = reports().stream()
                 .filter(file -> !date(file).isBefore(from) && !date(file).isAfter(to)).toList();
         if (selected.isEmpty()) throw new IOException("No reports in the selected date range");
         Path target = output.toAbsolutePath().normalize();
         if (Files.exists(target)) throw new IOException("Export already exists: " + target);
-        // An export must not masquerade as a daily report or replace a lock/receipt.
+        // An export must not masquerade as a report or replace a lock/receipt.
         if (target.startsWith(directory.toAbsolutePath().normalize())) {
             throw new IllegalArgumentException("Export output must be outside the report directory");
         }
