@@ -4,3 +4,4 @@ build/
 # Local test cluster and your own locator settings (may hold passwords)
 .test-cluster/
 locator.properties
+.env

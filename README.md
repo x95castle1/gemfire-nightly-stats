@@ -17,12 +17,12 @@ The collector runs on a locator and writes one report per cluster: when it was c
 |  | Host | `host` | The machine the member runs on<br>Sample: `192.168.68.60` for all 3 members (the IP here; in Docker it was the hostname) | **JMX** `Member.Host` (the hostname or the IP, depending on the setup) |
 |  | OS | `os.kernel`, `os.distribution` | Example: RHEL 8 (`Linux 4.18.0-553.89.1.el8_10.x86_64 amd64`)<br>Sample: `Mac OS X 15.6 aarch64`, distribution `null` (macOS isn't RHEL, and on macOS the version is the macOS release, not the kernel) | **JMX** `Member.showOSMetrics()` → `name` + `version` + `arch` for the kernel string<br>The distribution comes from the kernel version: RHEL kernels carry the release, e.g. `…el8_10…` = RHEL 8.10 (`el7` kernels only carry the major version). Other kernels give no distribution<br>Don't use the `Build-Platform` line in `Member.Version`: that's the machine GemFire was built on |
 |  | Address Family | `address_family` | IPv4 or IPv6 for the host machine<br>Sample: `IPv4` on all 3 members | **JMX** `Member.Version` → the `Running on: <host>/<ip>, …` line: dotted = IPv4, contains `:` = IPv6<br>Don't use `Member.Id`: it can start with the hostname instead of the IP |
-|  | Memory | `memory_bytes` | The host machines memory<br>Sample: `38654705664` bytes (36 GiB) on all 3 members | **JMX** `Member.showOSMetrics()` → `totalPhysicalMemorySize` (bytes, although the javadoc says MB) |
+|  | Memory | `memory_bytes` | The host machines memory<br>Sample: `38654705664` bytes (36 GiB) on all 3 members | **JMX** `Member.showOSMetrics()` → `totalPhysicalMemorySize` (bytes, although the javadoc says MB)<br>GemFire 10.1 only knows it on Linux: elsewhere (e.g. macOS) it reports `-1`, written as `null` |
 |  | memory quotas | `memory_quotas.heap_max_mb`, `memory_quotas.off_heap_max_bytes` | The configured heap and off-heap memory<br>Sample: native-locator `512` MB heap; native-server-0 / native-server-1 `1024` MB heap; no off-heap | **JMX** `Member.MaxMemory` (MB, the `-Xmx` value). Off-heap, if used: `Member.OffHeapMaxMemory` (bytes) |
 |  | CPU count | `available_processors` | CPUs the member's host reports (the `6 cpu(s)` in the log banner)<br>Sample: `12` on all 3 members | **JMX** `Member.showOSMetrics()` → `availableProcessors` |
 |  | uptime | `uptime_seconds` | Total Uptime of the Gemfire Locator or Server<br>Sample: native-locator `14` s (just restarted), native-server-0 `62` s, native-server-1 `58` s | **JMX** `Member.MemberUpTime` (seconds) |
 |  | software_version | `software_version` | Example: `10.1.3` (`Tanzu GemFire 10.1.3`)<br>Sample: `10.3.2` on all 3 members | **JMX** `Member.ReleaseVersion` (`10.1.3`). `Member.Version` has the full product string |
-|  | Installation path | `installation_path` | Example: `/opt/middleware/pivotal/gemfire_1013`<br>Sample: `/Users/example/dev/vmware-gemfire-10.3.2` on all 3 members | **JMX** `Member.ClassPath`: find GemFire's own jar by name (`gemfire-bootstrap.jar`, `gemfire-dependencies.jar` or `geode-dependencies.jar`) and take the folder above its `lib/`. Matching by name skips other jars that sit in their own `lib/` folders |
+|  | Installation path | `installation_path` | Example: `/opt/middleware/pivotal/gemfire_1013`<br>Sample: `/Users/example/dev/vmware-gemfire-10.3.2` on all 3 members | **JMX** `Member.ClassPath`: find GemFire's own jar by name (`gemfire-bootstrap.jar`, `gemfire-bootstrap-<version>.jar` in 10.1, `gemfire-dependencies.jar` or `geode-dependencies.jar`) and take the folder above its `lib/`. Matching by name skips other jars that sit in their own `lib/` folders |
 |  | Encryption | `encryption.ssl_enabled`, `encryption.ssl_enabled_components` | Is SSL Enabled?<br>Sample: `true`, components `["ALL"]` on all 3 members | **JMX** `Member.listGemFireProperties()` → `securableCommunicationChannel` (the `ssl-enabled-components` setting; empty list = no SSL), plus the legacy `clusterSSLEnabled` / `serverSSLEnabled` / `gatewaySSLEnabled` / `jmxManagerSSLEnabled` / `httpServiceSSLEnabled` |
 |  | TLS | `tls.ssl_protocols`, `tls.ssl_client_protocols`, `tls.ssl_server_protocols` | What TLS Protocols are Enabled<br>Sample: `ssl-protocols` = `TLSv1.2 TLSv1.3` on all 3 members (set in `gfsecurity.properties`, which GemFire reports space-separated); client/server protocols not set | **JMX** `processCommand("describe config --member=<name> --hide-defaults=false")` on the manager's `Member` MBean returns JSON. Read `ssl-protocols`, `ssl-client-protocols` and `ssl-server-protocols` from the `api-properties` or `file-properties` section, or from a `-Dgemfire.ssl-…` entry in `jvm-args`. Not set = `any` (JDK default, usually TLSv1.2 + TLSv1.3)<br>Don't use `Member.listGemFireProperties()` → `SSLProtocols`: GemFire never fills it in, so it's always `null` |
 
@@ -46,8 +46,11 @@ The collector runs on a locator and writes one report per cluster: when it was c
 | `src/main/java/com/example/gemfire/stats/NightlyStatsLocatorStart.java` | Starts the locator with its JMX manager running, schedules the daily run and writes the file |
 | `src/main/java/com/example/gemfire/stats/NightlyStatsCollector.java` | Reads the MBeans and builds the report, following the Source column above |
 | `src/main/java/com/example/gemfire/stats/Json.java` | Minimal JSON reader and writer. GemFire's bundled Jackson differs between 10.1 and 10.3, so it isn't used |
+| `src/main/java/com/example/gemfire/stats/S3Uploader.java` | Uploads a report to S3 with one signed PUT, using only the JDK (no AWS SDK) |
+| `src/main/java/com/example/gemfire/stats/ReportDelivery.java` | Finds reports that aren't uploaded yet, uploads them and records a receipt for each |
 | `scripts/start-locator.sh` | Runs the locator with GemFire's classpath and JVM flags |
 | `locator.properties.example` | Every setting, with comments |
+| `docker-compose.yml`, `.env.example` | A local SeaweedFS S3 store to upload to |
 
 The `Makefile` wraps the build, running it and a local test cluster. `make` lists every target.
 
@@ -75,6 +78,41 @@ Other things you can do:
 - Its messages go to the locator's log and contain `Nightly stats`. A failed run is logged, and the next day's run tries again. It never stops the locator.
 - Servers need nothing extra.
 - Not tested: a cluster with a security manager. Inside the JVM, `describe config` could then be refused. If that happens, `tls` is `null` and a warning is logged.
+
+## Uploading to S3
+
+If `S3_ENDPOINT` is set, the collector also uploads each report to that S3-compatible store (SeaweedFS, MinIO or AWS S3), keeping the file on disk too. The settings, all in `locator.properties`:
+
+| Setting | Default | What it is |
+| --- | --- | --- |
+| `S3_ENDPOINT` | not set: no upload | e.g. `http://localhost:8333`. HTTPS uses the JVM's default truststore, not GemFire's `ssl-*` settings |
+| `S3_BUCKET` | required | e.g. `gemfire-stats` |
+| `S3_REGION` | `us-east-1` | Used for signing. SeaweedFS and MinIO accept any value |
+| `S3_PREFIX` | `nightly-stats` | Start of every object key |
+| `S3_ACCESS_KEY`, `S3_SECRET_KEY` | the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables | So keys can stay out of the properties file |
+
+- Each report goes to `<S3_PREFIX>/<ENV>/<CLUSTER_NAME>/<CLUSTER_NAME>-<yyyy-MM-dd>.json`, e.g. `nightly-stats/local/test-cluster/test-cluster-2026-10-08.json`. Requests are path-style (`<endpoint>/<bucket>/<key>`). With upload on, `ENV` and `CLUSTER_NAME` may only contain letters, numbers, dots, underscores and hyphens.
+- Each successful upload writes a receipt to `<NIGHTLY_STATS_DIR>/.uploaded/`: the destination, the object key and the file's SHA-256. A report without a matching receipt is pending. That covers a failed upload, a same-day rerun that changed the file, and a new endpoint or bucket.
+- Pending reports are uploaded, newest first, when the locator starts and after every daily run, up to 32 per pass. A pass stops at the first failure, so while S3 is down each pass costs one failed request. A failure is logged (`Nightly stats upload failed`) and never stops the locator.
+- To upload everything again, e.g. after emptying the bucket, delete `.uploaded/` and restart the locator.
+
+### Local SeaweedFS
+
+`docker-compose.yml` runs SeaweedFS 4.48 in its single-process `mini` mode, with its data in a named volume. Both ports are bound to `127.0.0.1` only:
+
+- S3 API: `http://localhost:8333`. It creates the bucket on startup.
+- Admin UI: http://localhost:23646. Browse the reports under Object Store → Buckets.
+
+The S3 keys and the Admin UI login are in `.env`, which git ignores. `make s3-up` creates it from `.env.example` the first time.
+
+```sh
+make s3-up            # start SeaweedFS (creates .env on first use)
+make test S3=true     # the end-to-end test, plus: the locator uploads its report, then curl downloads it and compares
+make s3-ls            # list the bucket
+make s3-down          # stop SeaweedFS, keeping its data (docker compose down -v deletes it)
+```
+
+To upload from your own locator, add `S3_ENDPOINT=http://localhost:8333` and `S3_BUCKET=gemfire-stats` to `locator.properties`, and pass the keys from `.env` as properties or environment variables.
 
 ## Verification
 

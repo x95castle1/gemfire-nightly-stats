@@ -37,7 +37,8 @@ public class NightlyStatsCollector {
     private static final Pattern RUNNING_ON_IP = Pattern.compile("Running on: [^/]+/([^,]+),");
     private static final Pattern RHEL_KERNEL = Pattern.compile("\\.el(\\d+)(?:_(\\d+))?");
     private static final Pattern GEMFIRE_JAR =
-            Pattern.compile("(.*)/lib/(?:gemfire-dependencies|geode-dependencies|gemfire-bootstrap)\\.jar");
+            // gfsh-started members run from gemfire-bootstrap-<version>.jar in 10.1, gemfire-bootstrap.jar in 10.3
+            Pattern.compile("(.*)/lib/(?:gemfire-dependencies|geode-dependencies|gemfire-bootstrap(?:-[0-9][^/]*)?)\\.jar");
     private static final String[] LEGACY_SSL_FLAGS = {"clusterSSLEnabled", "serverSSLEnabled",
             "gatewaySSLEnabled", "jmxManagerSSLEnabled", "httpServiceSSLEnabled"};
 
@@ -115,7 +116,7 @@ public class NightlyStatsCollector {
                 "os", map("kernel", os.get("name") + " " + osVersion + " " + os.get("arch"),
                         "distribution", rhelRelease(osVersion)),
                 "address_family", addressFamily((String) attribute(member, "Version")),
-                "memory_bytes", os.get("totalPhysicalMemorySize"),
+                "memory_bytes", physicalMemory((Long) os.get("totalPhysicalMemorySize")),
                 "memory_quotas", map("heap_max_mb", attribute(member, "MaxMemory"),
                         "off_heap_max_bytes", attribute(member, "OffHeapMaxMemory")),
                 "available_processors", os.get("availableProcessors"),
@@ -210,6 +211,14 @@ public class NightlyStatsCollector {
             return null;
         }
         return "RHEL " + matcher.group(1) + (matcher.group(2) != null ? "." + matcher.group(2) : "");
+    }
+
+    /**
+     * GemFire 10.1 reads physical memory from its own OS statistics, which only exist on Linux, and
+     * reports -1 elsewhere (e.g. macOS). Written as null, since it's unknown rather than negative.
+     */
+    static Long physicalMemory(Long totalPhysicalMemorySize) {
+        return totalPhysicalMemorySize == null || totalPhysicalMemorySize < 0 ? null : totalPhysicalMemorySize;
     }
 
     static String addressFamily(String version) {
