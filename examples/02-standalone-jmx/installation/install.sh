@@ -15,6 +15,7 @@ java_home=${JAVA_HOME:-}
 interval_seconds=60
 config_source=""
 start_now=false
+leave_stopped=false
 
 die() { echo "Error: $*" >&2; exit 1; }
 usage() {
@@ -24,14 +25,17 @@ Usage: sudo installation/install.sh --gemfire-home /opt/vmware-gemfire [options]
   --gemfire-home PATH       GemFire installation providing lib/gemfire-dependencies.jar
   --java-home PATH          Use this existing Java 17+ runtime (otherwise detect java on PATH)
   --interval-seconds N      Wait N seconds between completed collections (default: 60)
-  --config FILE            Install this configured properties file instead of the example
-  --start                  Start the timer now; otherwise enable it for boot only
+  --config FILE            Install configured properties and start the timer automatically
+  --start                  Start the timer now using the installed configuration
+  --no-start               Leave the timer stopped, including when --config is supplied
   --help                   Show this help
 
 Run from a built checkout or an unpacked distribution. The application is installed under
 /opt/gemfire-nightly-stats, configuration under /etc/gemfire-nightly-stats and reports under
 /var/lib/gemfire-nightly-stats. Existing configuration and reports are preserved unless an
-explicit --config is supplied. An already-running timer resumes after an update.
+explicit --config is supplied. With --config, or when updating an active timer, scheduling
+starts automatically unless --no-start is supplied. A template-only installation stays stopped.
+The timer is enabled for future boots in all cases; configure a template before rebooting.
 HELP
 }
 
@@ -47,11 +51,14 @@ while (($#)); do
       esac
       shift 2 ;;
     --start) start_now=true; shift ;;
+    --no-start) leave_stopped=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) die "Unknown option: $1" ;;
   esac
 done
 
+[[ "$start_now" != true || "$leave_stopped" != true ]] || die 'Use either --start or --no-start, not both.'
+if [[ -n "$config_source" && "$leave_stopped" != true ]]; then start_now=true; fi
 [[ "$interval_seconds" =~ ^[1-9][0-9]*$ && "$interval_seconds" -le 2147483647 ]] || die 'Interval must be a positive integer no greater than 2147483647.'
 [[ $(uname -s) = Linux ]] || die 'Run this installer on the Ubuntu VM, not on your workstation.'
 [[ $(id -u) = 0 ]] || die 'Run this installer with sudo.'
@@ -106,7 +113,7 @@ runuser -u "$ACCOUNT" -- test -r "$gemfire_home/lib/gemfire-dependencies.jar" ||
 runuser -u "$ACCOUNT" -- test -x "$java_home/bin/java" || die 'The gemfire-stats account cannot execute the selected Java runtime.'
 
 if [[ -f "$UNIT_DIR/$SERVICE.timer" ]]; then
-  if systemctl is-active --quiet "$SERVICE.timer"; then start_now=true; fi
+  if [[ "$leave_stopped" != true ]] && systemctl is-active --quiet "$SERVICE.timer"; then start_now=true; fi
   systemctl stop "$SERVICE.timer" "$SERVICE.service"
 fi
 install -d -m 0755 "$APP_DIR/bin" "$APP_DIR/lib"
@@ -114,6 +121,7 @@ install -d -m 0750 -o root -g "$ACCOUNT" "$CONFIG_DIR"
 install -d -m 0750 -o "$ACCOUNT" -g "$ACCOUNT" "$STATE_DIR" "$STATE_DIR/reports"
 install -m 0644 "$source_jar" "$APP_DIR/lib/02-standalone-jmx.jar"
 install -m 0755 "$source_launcher" "$APP_DIR/bin/collect-stats.sh"
+install -m 0755 "$INSTALLATION_DIR/stop.sh" "$APP_DIR/bin/stop.sh"
 install -m 0640 -o root -g "$ACCOUNT" "$INSTALLATION_DIR/collector.example.properties" "$CONFIG_DIR/collector.example.properties"
 if [[ -n "$config_source" ]]; then
   if [[ $(readlink -f "$config_source") != "$CONFIG_DIR/collector.properties" ]]; then
@@ -140,12 +148,23 @@ sed "s/^OnUnitInactiveSec=.*/OnUnitInactiveSec=${interval_seconds}s/" "$INSTALLA
 chmod 0644 "$UNIT_DIR/$SERVICE.timer"
 systemctl daemon-reload
 systemctl enable "$SERVICE.timer"
-if [[ "$start_now" = true ]]; then systemctl restart "$SERVICE.timer"; fi
+if [[ "$start_now" = true ]]; then
+  systemctl restart "$SERVICE.timer" || die "Could not start $SERVICE.timer. Check: sudo journalctl -u $SERVICE.timer -n 50 --no-pager"
+  systemctl is-active --quiet "$SERVICE.timer" || die "The timer is not active. Check: sudo systemctl status $SERVICE.timer"
+fi
 
 echo "Installed $SERVICE with a ${interval_seconds}-second delay between completed collections."
 echo "Configuration: $CONFIG_DIR/collector.properties and $CONFIG_DIR/collector.env"
 echo "Reports: $STATE_DIR/reports/<ENV>/<CLUSTER_NAME>/"
-if [[ "$start_now" != true ]]; then
-  echo "Edit the configuration, then run: sudo systemctl start $SERVICE.timer"
+if [[ "$start_now" = true ]]; then
+  echo 'Timer: active and enabled for boot. First collection in about 10 seconds.'
+  systemctl list-timers --all "$SERVICE.timer" --no-pager
+else
+  echo 'Timer: STOPPED; enabled for future boots only. Automatic collection has not started.'
+  echo "Configure the collector, then run: sudo systemctl enable --now $SERVICE.timer"
 fi
+echo 'Timer activation does not confirm JMX collection or S3 delivery; check the service results.'
+echo "Status: sudo systemctl list-timers --all $SERVICE.timer"
+echo "Last run: sudo systemctl show $SERVICE.service -p Result -p ExecMainStatus -p ExecMainExitTimestamp"
 echo "Logs: sudo journalctl -u $SERVICE.service -f"
+echo "Stop collection and disable scheduling: sudo $APP_DIR/bin/stop.sh"

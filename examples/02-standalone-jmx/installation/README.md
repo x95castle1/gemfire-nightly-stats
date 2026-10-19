@@ -40,13 +40,16 @@ sudo ./installation/install.sh \
   --java-home /usr/lib/jvm/java-17-openjdk-amd64
 
 sudoedit /etc/gemfire-nightly-stats/collector.properties
-sudo systemctl start gemfire-nightly-stats.timer
+sudo systemctl enable --now gemfire-nightly-stats.timer
 ```
 
 `--java-home` is optional if `JAVA_HOME` or the root user's `PATH` already selects a suitable
 runtime. The installer records the resolved Java and GemFire paths for systemd; it does not
-depend on an interactive shell's environment. Installation enables the timer for future boots
-but does not start a new installation unless `--start` is supplied. Configure it before rebooting.
+depend on an interactive shell's environment. Supplying `--config` starts the timer automatically.
+A first installation using only the example template leaves the timer stopped and enables it
+for future boots; configure it before rebooting. Use `--start` to start with an existing installed
+configuration, or `--no-start` to leave the timer stopped even when supplying `--config` or updating
+an active installation. `--start` and `--no-start` cannot be combined.
 
 Set `ENV`, `CLUSTER_NAME`, `JMX_HOST` and `JMX_PORT` in the properties file. The supplied host
 is an example; replace it. Use the manager's JMX port, not the locator discovery port. The VM
@@ -69,9 +72,13 @@ If you already have a configured file, install and start directly. For a 30-seco
 sudo ./installation/install.sh \
   --gemfire-home /opt/vmware-gemfire \
   --config /tmp/my-collector.properties \
-  --interval-seconds 30 \
-  --start
+  --interval-seconds 30
 ```
+
+The installer verifies timer activation, prints whether scheduling is **active** or **stopped**,
+and shows the next scheduled trigger when active. This confirms scheduling only; check the
+service result and journal to confirm successful collection and delivery. Add `--no-start` if
+you need to adjust JVM options or certificate permissions before the first run.
 
 The timer first triggers about 10 seconds after it starts. Each subsequent run waits the
 configured interval after the previous collection/upload completes. Runs do not overlap.
@@ -85,6 +92,7 @@ seconds, can be selected with `--interval-seconds`.
 | Location | Contents |
 |---|---|
 | `/opt/gemfire-nightly-stats/bin/collect-stats.sh` | Existing standalone launcher |
+| `/opt/gemfire-nightly-stats/bin/stop.sh` | Stop the collector process and disable its timer |
 | `/opt/gemfire-nightly-stats/lib/02-standalone-jmx.jar` | Complete collector application |
 | `/etc/gemfire-nightly-stats/collector.properties` | JMX, report and optional S3 configuration |
 | `/etc/gemfire-nightly-stats/collector.env` | Selected Java/GemFire runtime paths and JVM options only |
@@ -97,7 +105,8 @@ reports and existing properties unless you explicitly pass `--config`. Reinstall
 the application, units and selected runtime paths while retaining `JAVA_OPTS` and the credentials
 in your properties file. If upgrading an earlier installation with credentials in `collector.env`,
 move them to `collector.properties` and remove the environment entries before reinstalling.
-It stops the old timer/service during replacement and resumes a timer that was already running.
+It stops the old timer/service during replacement and resumes a timer that was already running,
+unless `--no-start` is supplied.
 Pass `--interval-seconds` again when reinstalling
 to retain a nondefault interval.
 
@@ -106,17 +115,32 @@ to retain a nondefault interval.
 ```sh
 sudo systemctl list-timers gemfire-nightly-stats.timer
 sudo systemctl status gemfire-nightly-stats.timer gemfire-nightly-stats.service
+sudo systemctl show gemfire-nightly-stats.service \
+  -p Result -p ExecMainStatus -p ExecMainExitTimestamp
 sudo journalctl -u gemfire-nightly-stats.service -f
 
 # Collect once immediately, independently of the next scheduled run.
 sudo systemctl start gemfire-nightly-stats.service
 
 # Stop scheduled collection and any current run; keep all saved reports.
-sudo systemctl disable --now gemfire-nightly-stats.timer
-sudo systemctl stop gemfire-nightly-stats.service
+sudo /opt/gemfire-nightly-stats/bin/stop.sh
+
+# Resume automatic collection now and after future boots.
+sudo systemctl enable --now gemfire-nightly-stats.timer
 ```
 
+The same stop script is available as `sudo ./installation/stop.sh` in a checkout or unpacked
+distribution. It disables and stops the timer before stopping any running collector process,
+then verifies that both units are inactive. It preserves configuration and reports, and can
+be run again when the collector is already stopped.
+
 An inactive one-shot service between successful runs is expected; the timer remains active.
+`list-timers` shows when scheduling last triggered and when it will trigger next. A completed
+successful service run has `Result=success`, `ExecMainStatus=0` and a recent exit timestamp;
+timer activation alone does not establish collection success. If the collector timer is absent
+from `list-timers`, check `systemctl status gemfire-nightly-stats.timer` and start it with the
+resume command above. Starting only the `.service` performs one collection and does not enable
+automatic scheduling.
 Changes to the properties/environment files take effect on the next collection. For a new
 interval, rerun the installer with `--interval-seconds`, or edit the timer and run
 `sudo systemctl daemon-reload` followed by `sudo systemctl restart gemfire-nightly-stats.timer`.

@@ -43,6 +43,8 @@ with tempfile.TemporaryDirectory(prefix="collector-install-check-") as temporary
     }.items():
         script = script.replace(before, after)
     installer.write_text(script)
+    stopper = source / "installation/stop.sh"
+    stopper.write_text(stopper.read_text().replace("/run/systemd/system", str(root / "systemd")))
     gemfire = root / "gemfire"
     (gemfire / "lib").mkdir(parents=True)
     dependencies = gemfire / "lib/gemfire-dependencies.jar"
@@ -67,9 +69,16 @@ done
 exec "$REAL_INSTALL" "${args[@]}"''')
     executable(tools / "systemctl", '''printf 'systemctl|%s\n' "$*" >> "$FIXTURE/trace"
 case "$1" in
-  is-active) [[ -f "$FIXTURE/active" ]] ;;
-  stop) rm -f "$FIXTURE/active" ;;
-  restart) touch "$FIXTURE/active" ;;
+  is-active)
+    if [[ "${*: -1}" = *.service ]]; then [[ -f "$FIXTURE/service-active" ]];
+    else [[ -f "$FIXTURE/active" ]]; fi ;;
+  enable) touch "$FIXTURE/enabled" ;;
+  disable) rm -f "$FIXTURE/enabled" "$FIXTURE/active" ;;
+  stop) rm -f "$FIXTURE/active" "$FIXTURE/service-active" ;;
+  restart)
+    [[ "${TEST_TIMER_START_FAIL:-false}" != true ]] || exit 1
+    touch "$FIXTURE/active" ;;
+  list-timers) echo 'NEXT LEFT LAST PASSED UNIT ACTIVATES' ;;
 esac''')
     for manager in ("apt", "apt-get", "yum", "dnf"):
         executable(tools / manager, 'echo package-manager-called >> "$FIXTURE/trace"\nexit 99')
@@ -80,8 +89,9 @@ esac''')
     environment.pop("JAVA_HOME", None)
     base = ["bash", str(installer), "--gemfire-home", str(gemfire), "--java-home", str(java_home)]
 
-    def run(*options, success=True, version="17"):
-        env = dict(environment, TEST_JAVA_VERSION=version)
+    def run(*options, success=True, version="17", timer_start_failure=False):
+        env = dict(environment, TEST_JAVA_VERSION=version,
+                   TEST_TIMER_START_FAIL=str(timer_start_failure).lower())
         result = subprocess.run(base + list(options), env=env, text=True, capture_output=True)
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         return result
@@ -98,13 +108,18 @@ esac''')
     dependencies.touch()
 
     # First install creates ready-to-edit configuration, enables boot scheduling, and stays stopped.
-    run()
+    staged = run()
     config = root / "config/collector.properties"
     env_file = root / "config/collector.env"
     assert stat.S_IMODE(config.stat().st_mode) == 0o640
     assert stat.S_IMODE(env_file.stat().st_mode) == 0o640
     assert not (root / "active").exists()
+    assert (root / "enabled").exists()
+    assert "Timer: STOPPED" in staged.stdout
+    assert "Automatic collection has not started" in staged.stdout
     assert (root / "app/lib/02-standalone-jmx.jar").read_bytes() == b"example-jar"
+    assert (root / "app/bin/stop.sh").read_text() == stopper.read_text()
+    assert stat.S_IMODE((root / "app/bin/stop.sh").stat().st_mode) == 0o755
     assert "OnUnitInactiveSec=60s" in (units / "gemfire-nightly-stats.timer").read_text()
     assert "restart" not in (root / "trace").read_text()
     # No --java-home is needed when PATH selects an existing Java runtime.
@@ -128,6 +143,14 @@ esac''')
     assert 'JAVA_OPTS="-Xmx512m"' in text
     assert sum(line.startswith("GEMFIRE_HOME=") for line in text.splitlines()) == 1
     assert "OnUnitInactiveSec=30s" in (units / "gemfire-nightly-stats.timer").read_text()
+    trace_before = (root / "trace").read_text()
+    run("--start", "--no-start", success=False)
+    assert (root / "trace").read_text() == trace_before
+    # Explicit staging must also override the resume behavior of an active installation.
+    deferred = run("--no-start")
+    assert not (root / "active").exists()
+    assert "Timer: STOPPED" in deferred.stdout
+    assert config.read_text() == configured_text
     # An older env credential must be moved explicitly, never silently lost during an upgrade.
     runtime_text = env_file.read_text()
     env_file.write_text(runtime_text + "JMX_PASSWORD=legacy-test-value\n")
@@ -140,8 +163,21 @@ esac''')
     env_file.write_text(runtime_text)
     custom = root / "configured.properties"
     custom.write_text("ENV=explicit-replacement\n")
-    run("--config", str(custom), "--interval-seconds", "30")
+    # A supplied config starts a previously stopped timer without a separate --start.
+    started = run("--config", str(custom), "--interval-seconds", "30")
     assert config.read_text() == custom.read_text()
+    assert (root / "active").exists(), "--config must start scheduling automatically"
+    assert "Timer: active and enabled for boot" in started.stdout
+    assert "NEXT LEFT LAST PASSED" in started.stdout
+    assert "ExecMainExitTimestamp" in started.stdout
+    assert str(root / "app/bin/stop.sh") in started.stdout
+    run("--config", str(custom), "--no-start")
+    assert not (root / "active").exists(), "--no-start must override --config"
+    failed_start = run("--config", str(custom), success=False, timer_start_failure=True)
+    assert "Could not start gemfire-nightly-stats.timer" in failed_start.stderr
+    assert "Timer: active" not in failed_start.stdout
+    run("--start")
+    run("--interval-seconds", "30")
     assert (root / "active").exists(), "An active timer must resume after updating"
     assert "package-manager-called" not in (root / "trace").read_text()
 
@@ -158,4 +194,23 @@ esac''')
     assert service["Service"]["User"] == "gemfire-stats"
     assert "collect --config /etc/gemfire-nightly-stats/collector.properties" in service["Service"]["ExecStart"]
 
-print("Installer checks passed: preflight, no package installation, both layouts, permissions, updates and timer activation.")
+    # Stopping disables scheduling before stopping a collection, preserves data and is repeatable.
+    (root / "service-active").touch()
+    trace_before = len((root / "trace").read_text().splitlines())
+    stopped = subprocess.run(["bash", str(root / "app/bin/stop.sh")], env=environment,
+                             text=True, capture_output=True)
+    assert stopped.returncode == 0, stopped.stdout + stopped.stderr
+    assert not (root / "active").exists()
+    assert not (root / "service-active").exists()
+    assert not (root / "enabled").exists()
+    assert report.read_text() == "retain this report"
+    assert config.read_text() == custom.read_text()
+    assert "Resume collection: sudo systemctl enable --now" in stopped.stdout
+    stop_trace = (root / "trace").read_text().splitlines()[trace_before:]
+    assert stop_trace[:2] == ["systemctl|disable --now gemfire-nightly-stats.timer",
+                              "systemctl|stop gemfire-nightly-stats.service"]
+    repeated_stop = subprocess.run(["bash", str(stopper)], env=environment,
+                                  text=True, capture_output=True)
+    assert repeated_stop.returncode == 0, repeated_stop.stdout + repeated_stop.stderr
+
+print("Installer checks passed: preflight, permissions, updates, automatic/staged startup, startup failure and repeatable shutdown.")

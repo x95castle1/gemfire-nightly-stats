@@ -25,7 +25,8 @@ bash /example/installation/install.sh \
   --gemfire-home /opt/gemfire \
   --java-home /opt/test-java \
   --config "$config" \
-  --interval-seconds "${INSTALL_TEST_INTERVAL_SECONDS:-30}"
+  --interval-seconds "${INSTALL_TEST_INTERVAL_SECONDS:-30}" \
+  --no-start
 if [[ -d /etc/gemfire-nightly-stats/test-certs ]]; then
   chown -R root:gemfire-stats /etc/gemfire-nightly-stats/test-certs
   find /etc/gemfire-nightly-stats/test-certs -type d -exec chmod 0750 {} +

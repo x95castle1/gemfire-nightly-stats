@@ -93,6 +93,9 @@ For an Ubuntu VM, use the [systemd installer](installation/README.md). It checks
 Java/GemFire installation, installs a dedicated service account, example configuration and a
 timer (one minute by default, configurable down to 30 seconds for demos). It installs no Java
 runtime or packages. The complete `installation/` directory is included in the distributions.
+Supplying `--config` starts its timer automatically; `--no-start` stages configuration for later
+activation. The installer prints the timer state and next trigger. Use the installed
+`sudo /opt/gemfire-nightly-stats/bin/stop.sh` to stop a running collection and disable scheduling.
 The [Docker Compose installation test](installation/README.md#test-the-installation-with-docker-compose)
 boots Ubuntu with systemd, runs the real installer automatically, and verifies scheduled reports
 and optional S3 uploads using the `installation-test` profile.
