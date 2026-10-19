@@ -99,6 +99,10 @@ runtime or packages. The complete `installation/` directory is included in the d
 Supplying `--config` starts its timer automatically; `--no-start` stages configuration for later
 activation. The installer prints the timer state and next trigger. Use the installed
 `sudo /opt/gemfire-nightly-stats/bin/stop.sh` to stop a running collection and disable scheduling.
+The installed service writes `/var/log/gemfire-nightly-stats/collector.log` and journald, with
+UTC start/finish timestamps and the collector exit status. The installer configures logrotate
+for daily rotation and up to 14 archives; it checks for existing `logrotate` without installing
+packages. Use `sudo tail -F /var/log/gemfire-nightly-stats/collector.log` to follow the file.
 The [Docker Compose installation test](installation/README.md#test-the-installation-with-docker-compose)
 boots Ubuntu with systemd, runs the real installer automatically, and verifies scheduled reports
 and optional S3 uploads using the `installation-test` profile.

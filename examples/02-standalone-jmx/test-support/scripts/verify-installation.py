@@ -37,6 +37,8 @@ with tempfile.TemporaryDirectory(prefix="collector-install-check-") as temporary
         "/opt/gemfire-nightly-stats": str(root / "app"),
         "/etc/gemfire-nightly-stats": str(root / "config"),
         "/var/lib/gemfire-nightly-stats": str(root / "state"),
+        "/var/log/gemfire-nightly-stats": str(root / "logs"),
+        "/etc/logrotate.d": str(root / "logrotate.d"),
         "/etc/systemd/system": str(units),
         "/etc/os-release": str(root / "os-release"),
         "/run/systemd/system": str(root / "systemd"),
@@ -60,6 +62,7 @@ with tempfile.TemporaryDirectory(prefix="collector-install-check-") as temporary
     executable(tools / "groupadd", 'touch "$FIXTURE/account-group"')
     executable(tools / "useradd", 'touch "$FIXTURE/account-passwd"')
     executable(tools / "chown", ":")
+    executable(tools / "logrotate", ":")
     executable(tools / "runuser", 'shift 3\nexec "$@"')
     executable(tools / "systemd-analyze", '''[[ "$1" = calendar && "$2" = -- ]]
 printf '%s\n' "$3" >> "$FIXTURE/calendar-validations"
@@ -123,6 +126,13 @@ esac''')
     assert (root / "app/lib/02-standalone-jmx.jar").read_bytes() == b"example-jar"
     assert (root / "app/bin/stop.sh").read_text() == stopper.read_text()
     assert stat.S_IMODE((root / "app/bin/stop.sh").stat().st_mode) == 0o755
+    log = root / "logs/collector.log"
+    assert log.exists()
+    assert stat.S_IMODE(log.stat().st_mode) == 0o640
+    assert stat.S_IMODE(log.parent.stat().st_mode) == 0o750
+    assert stat.S_IMODE((root / "app/bin/collect-stats-logged.sh").stat().st_mode) == 0o755
+    assert (root / "logrotate.d/gemfire-nightly-stats").read_text() == (PROJECT / "installation/gemfire-nightly-stats.logrotate").read_text()
+    log.write_text("previous collection log\n")
     assert "OnUnitInactiveSec=60s" in (units / "gemfire-nightly-stats.timer").read_text()
     assert "restart" not in (root / "trace").read_text()
     # No --java-home is needed when PATH selects an existing Java runtime.
@@ -140,6 +150,7 @@ esac''')
     assert (root / "active").exists()
     assert config.read_text() == configured_text
     assert report.read_text() == "retain this report"
+    assert log.read_text() == "previous collection log\n"
     text = env_file.read_text()
     assert "JMX_PASSWORD" not in text
     assert "AWS_SECRET_ACCESS_KEY" not in text
@@ -244,7 +255,40 @@ esac''')
     service.read(PROJECT / "installation/gemfire-nightly-stats.service")
     assert service["Service"]["Type"] == "oneshot"
     assert service["Service"]["User"] == "gemfire-stats"
-    assert "collect --config /etc/gemfire-nightly-stats/collector.properties" in service["Service"]["ExecStart"]
+    assert "collect-stats-logged.sh collect --config /etc/gemfire-nightly-stats/collector.properties" in service["Service"]["ExecStart"]
+    assert service["Service"]["LogsDirectory"] == "gemfire-nightly-stats"
+    assert service["Service"]["LogsDirectoryMode"] == "0750"
+    assert service["Service"]["StandardOutput"] == "journal"
+    assert service["Service"]["StandardError"] == "journal"
+    assert service["Service"]["KillMode"] == "control-group"
+
+    # Exercise the installed wrapper: capture stdout/stderr and preserve all collector exit codes.
+    executable(root / "app/bin/collect-stats.sh", '''printf '%s\\n' "$*" >> "$FIXTURE/collector-calls"
+echo 'report_file=/state/unique-report.json'
+echo 'upload result or error from collector stderr' >&2
+exit "${TEST_COLLECTOR_EXIT:-0}"''')
+    wrapper = root / "app/bin/collect-stats-logged.sh"
+    for exit_status in (0, 2, 3, 4):
+        wrapper_env = dict(environment, LOGS_DIRECTORY=str(log.parent), TEST_COLLECTOR_EXIT=str(exit_status))
+        captured = subprocess.run(["bash", str(wrapper), "collect", "--config", str(config)],
+                                  env=wrapper_env, text=True, capture_output=True)
+        assert captured.returncode == exit_status, captured.stdout + captured.stderr
+        assert captured.stdout in log.read_text(), "Journal output must also be in the physical log"
+        assert "Z Collection started." in captured.stdout
+        assert f"Z Collection finished; exit_status={exit_status}." in captured.stdout
+        assert "report_file=/state/unique-report.json" in captured.stdout
+        assert "upload result or error from collector stderr" in captured.stdout
+    assert (root / "collector-calls").read_text().splitlines() == [f"collect --config {config}"] * 4
+    assert log.read_text().startswith("previous collection log\n")
+    # A log setup failure must fail the service without starting an unlogged collection.
+    broken_log = subprocess.run(["bash", str(wrapper), "collect", "--config", str(config)],
+                               env=dict(environment, LOGS_DIRECTORY=str(root / "missing-logs")),
+                               text=True, capture_output=True)
+    assert broken_log.returncode != 0
+    assert len((root / "collector-calls").read_text().splitlines()) == 4
+    saved_logs = log.read_text()
+    run("--interval-seconds", "30")
+    assert log.read_text() == saved_logs, "Reinstallation must retain existing logs"
 
     # Stopping disables scheduling before stopping a collection, preserves data and is repeatable.
     (root / "service-active").touch()
@@ -256,6 +300,7 @@ esac''')
     assert not (root / "service-active").exists()
     assert not (root / "enabled").exists()
     assert report.read_text() == "retain this report"
+    assert log.read_text() == saved_logs
     assert config.read_text() == custom.read_text()
     assert "Resume collection: sudo systemctl enable --now" in stopped.stdout
     stop_trace = (root / "trace").read_text().splitlines()[trace_before:]
@@ -265,4 +310,4 @@ esac''')
                                   text=True, capture_output=True)
     assert repeated_stop.returncode == 0, repeated_stop.stdout + repeated_stop.stderr
 
-print("Installer checks passed: preflight, permissions, updates, timer startup, calendar validation/transitions and repeatable shutdown.")
+print("Installer checks passed: preflight, updates, scheduling, journal/file logging, exit codes, log preservation and shutdown.")

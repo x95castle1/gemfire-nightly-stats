@@ -7,6 +7,8 @@ SOURCE_DIR=$(cd "$INSTALLATION_DIR/.." && pwd)
 APP_DIR=/opt/gemfire-nightly-stats
 CONFIG_DIR=/etc/gemfire-nightly-stats
 STATE_DIR=/var/lib/gemfire-nightly-stats
+LOG_DIR=/var/log/gemfire-nightly-stats
+LOGROTATE_DIR=/etc/logrotate.d
 UNIT_DIR=/etc/systemd/system
 SERVICE=gemfire-nightly-stats
 ACCOUNT=gemfire-stats
@@ -66,7 +68,7 @@ if [[ -n "$config_source" && "$leave_stopped" != true ]]; then start_now=true; f
 [[ $(id -u) = 0 ]] || die 'Run this installer with sudo.'
 [[ -f /etc/os-release ]] && grep -Eq '^ID="?ubuntu"?$' /etc/os-release || die 'This installer requires Ubuntu.'
 command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] || die 'The VM must be booted with systemd.'
-for prerequisite in readlink awk install getent groupadd useradd runuser chown chmod mktemp sed; do
+for prerequisite in readlink awk install getent groupadd useradd runuser chown chmod mktemp sed tee date touch logrotate; do
   command -v "$prerequisite" >/dev/null || die "Required command is missing: $prerequisite"
 done
 [[ -n "$gemfire_home" ]] || die 'Set --gemfire-home (or GEMFIRE_HOME) to an existing GemFire installation.'
@@ -142,9 +144,16 @@ fi
 install -d -m 0755 "$APP_DIR/bin" "$APP_DIR/lib"
 install -d -m 0750 -o root -g "$ACCOUNT" "$CONFIG_DIR"
 install -d -m 0750 -o "$ACCOUNT" -g "$ACCOUNT" "$STATE_DIR" "$STATE_DIR/reports"
+install -d -m 0750 -o "$ACCOUNT" -g "$ACCOUNT" "$LOG_DIR"
+if [[ ! -e "$LOG_DIR/collector.log" ]]; then
+  runuser -u "$ACCOUNT" -- touch "$LOG_DIR/collector.log"
+fi
 install -m 0644 "$source_jar" "$APP_DIR/lib/02-standalone-jmx.jar"
 install -m 0755 "$source_launcher" "$APP_DIR/bin/collect-stats.sh"
+install -m 0755 "$INSTALLATION_DIR/collect-stats-logged.sh" "$APP_DIR/bin/collect-stats-logged.sh"
 install -m 0755 "$INSTALLATION_DIR/stop.sh" "$APP_DIR/bin/stop.sh"
+install -d -m 0755 "$LOGROTATE_DIR"
+install -m 0644 "$INSTALLATION_DIR/$SERVICE.logrotate" "$LOGROTATE_DIR/$SERVICE"
 install -m 0640 -o root -g "$ACCOUNT" "$INSTALLATION_DIR/collector.example.properties" "$CONFIG_DIR/collector.example.properties"
 if [[ -n "$config_source" ]]; then
   if [[ $(readlink -f "$config_source") != "$CONFIG_DIR/collector.properties" ]]; then
@@ -209,4 +218,6 @@ echo 'Timer activation does not confirm JMX collection or S3 delivery; check the
 echo "Status: sudo systemctl list-timers --all $SERVICE.timer"
 echo "Last run: sudo systemctl show $SERVICE.service -p Result -p ExecMainStatus -p ExecMainExitTimestamp"
 echo "Logs: sudo journalctl -u $SERVICE.service -f"
+echo "Log file: sudo tail -F $LOG_DIR/collector.log"
+echo "Rotation: daily or over 10 MiB at the next logrotate check; 14 archives. Check: systemctl status logrotate.timer"
 echo "Stop collection and disable scheduling: sudo $APP_DIR/bin/stop.sh"

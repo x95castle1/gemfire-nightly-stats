@@ -31,7 +31,14 @@ while ((SECONDS < deadline)); do
       fi
     done
     if [[ "$complete" = true ]]; then
+      log=/var/log/gemfire-nightly-stats/collector.log
+      for file in "${files[@]}"; do
+        grep -Fq "$(basename "$file")" "$log" || complete=false
+      done
+    fi
+    if [[ "$complete" = true ]]; then
       printf 'Verified %s distinct reports produced by the systemd timer since container startup.\n' "${#files[@]}"
+      echo 'Collection output is present in /var/log/gemfire-nightly-stats/collector.log.'
       printf '%s\n' "${files[@]}"
       exit 0
     fi

@@ -73,6 +73,7 @@ services:
           create_host_path: false
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - collector-install-test-data:/var/lib/gemfire-nightly-stats
+      - collector-install-test-logs:/var/log/gemfire-nightly-stats
     healthcheck:
       test: [CMD-SHELL, "systemctl is-active --quiet collector-install-bootstrap.service && systemctl is-active --quiet gemfire-nightly-stats.timer"]
       interval: 2s
@@ -83,3 +84,4 @@ services:
 volumes:
   seaweedfs-data:
   collector-install-test-data:
+  collector-install-test-logs:

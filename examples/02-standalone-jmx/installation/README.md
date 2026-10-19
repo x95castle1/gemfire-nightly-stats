@@ -8,7 +8,9 @@ its own S3 object.
 ## Prerequisites
 
 The installer checks for Ubuntu booted with systemd, root privileges, an existing Java 17+
-runtime, GemFire client libraries, the built collector jar and the required Ubuntu utilities.
+runtime, GemFire client libraries, the built collector jar and the required Ubuntu utilities,
+including `tee` and `logrotate`. Ubuntu's normal logrotate job must be running for automatic
+rotation; check it with `systemctl status logrotate.timer`.
 It installs no JDK, JRE, packages or GemFire software. Use a Java version supported by your
 GemFire installation. The service account must be able to traverse the Java and GemFire
 directories and read all GemFire client jars; installations under a private home directory
@@ -133,11 +135,14 @@ that sort after it can still override it.
 | Location | Contents |
 |---|---|
 | `/opt/gemfire-nightly-stats/bin/collect-stats.sh` | Existing standalone launcher |
+| `/opt/gemfire-nightly-stats/bin/collect-stats-logged.sh` | Service launcher copying collection output to the log file and journal |
 | `/opt/gemfire-nightly-stats/bin/stop.sh` | Stop the collector process and disable its timer |
 | `/opt/gemfire-nightly-stats/lib/02-standalone-jmx.jar` | Complete collector application |
 | `/etc/gemfire-nightly-stats/collector.properties` | JMX, report and optional S3 configuration |
 | `/etc/gemfire-nightly-stats/collector.env` | Selected Java/GemFire runtime paths and JVM options only |
 | `/var/lib/gemfire-nightly-stats/reports/<ENV>/<CLUSTER_NAME>/` | Individual reports and upload receipts |
+| `/var/log/gemfire-nightly-stats/collector.log` | Appended collection output, errors, upload results and UTC start/finish timestamps |
+| `/etc/logrotate.d/gemfire-nightly-stats` | Daily log rotation with up to 14 archives |
 | `/etc/systemd/system/gemfire-nightly-stats.service` | One-shot service running as `gemfire-stats` |
 | `/etc/systemd/system/gemfire-nightly-stats.timer` | Boot-enabled collection schedule |
 | `/etc/systemd/system/gemfire-nightly-stats.timer.d/zz-collector-schedule.conf` | Generated schedule from properties or the interval option |
@@ -152,6 +157,39 @@ unless `--no-start` is supplied.
 Pass `--interval-seconds` again when reinstalling to retain a nondefault interval.
 An existing `COLLECTION_CALENDAR` is read from the installed properties and reapplied when
 `--config` is omitted.
+
+## Collector log file
+
+The installed service appends stdout and stderr to
+`/var/log/gemfire-nightly-stats/collector.log` and also sends that output to journald.
+Each run includes a UTC start timestamp and a UTC completion timestamp with its exit status.
+The collector's existing output includes report filenames, upload results, pending uploads and
+errors. The logging launcher preserves collection/configuration/upload failure exit codes so
+systemd continues to report failures. It does not print settings or command arguments.
+
+```sh
+sudo tail -F /var/log/gemfire-nightly-stats/collector.log
+sudo journalctl -u gemfire-nightly-stats.service -f
+```
+
+The installer creates the directory with mode `0750` and the file with mode `0640`, owned by
+`gemfire-stats`. Reinstallation and the stop script preserve existing logs. Only the installed
+service uses this logging launcher; the ordinary `collect-stats.sh` CLI retains its existing
+stdout/stderr behavior.
+
+The installed logrotate rule rotates nonempty logs daily, or when larger than 10 MiB at a
+logrotate check, retaining up to 14 archives. This threshold is checked when logrotate runs,
+not continuously. Older archives are compressed; the newest archive stays uncompressed for
+one rotation cycle so an in-progress one-shot collection can finish writing to it. New runs
+open the current `collector.log`. The existing 20-minute service timeout is shorter than the
+normal daily rotation interval.
+
+The installer installs no packages and does not change the system-wide logrotate schedule.
+If that timer is disabled, enable Ubuntu's existing rotation job:
+
+```sh
+sudo systemctl enable --now logrotate.timer
+```
 
 ## Operate the collector
 
@@ -174,7 +212,7 @@ sudo systemctl enable --now gemfire-nightly-stats.timer
 
 The same stop script is available as `sudo ./installation/stop.sh` in a checkout or unpacked
 distribution. It disables and stops the timer before stopping any running collector process,
-then verifies that both units are inactive. It preserves configuration and reports, and can
+then verifies that both units are inactive. It preserves configuration, reports and logs, and can
 be run again when the collector is already stopped.
 
 An inactive one-shot service between successful runs is expected; the timer remains active.
@@ -269,9 +307,10 @@ docker compose exec collector-install-test /usr/local/bin/verify-installation.sh
 docker compose stop collector-install-test
 ```
 
-Reports persist in the `collector-install-test-data` named volume. `make clean` removes that
-volume as well as the SeaweedFS volume. `make stop` also stops the test container and keeps its
-reports. A mounted template with its placeholder JMX host is
+Reports persist in the `collector-install-test-data` named volume and logs in the
+`collector-install-test-logs` volume. `make clean` removes both volumes as well as the SeaweedFS
+volume. `make stop` also stops the test container and keeps its reports and logs.
+A mounted template with its placeholder JMX host is
 sufficient to inspect installation, but successful collection requires a configured properties
 file and a reachable cluster. For another cluster, set `INSTALL_TEST_CONFIG` to your properties
 file and ensure any TLS stores are also available inside the container at their configured paths.

@@ -5,7 +5,7 @@ FROM ${UBUNTU_IMAGE}
 ENV container=docker
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        systemd systemd-sysv dbus openjdk-17-jre-headless ca-certificates jq \
+        systemd systemd-sysv dbus openjdk-17-jre-headless ca-certificates jq logrotate \
     && ln -s /usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture) /opt/test-java \
     && mkdir -p /etc/systemd/system/multi-user.target.wants \
     && ln -s ../collector-install-bootstrap.service \

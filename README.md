@@ -65,7 +65,7 @@ networking for the laptop demo's JMX/RMI endpoint and uses a privileged containe
 See the [installation test instructions](examples/02-standalone-jmx/installation/README.md#test-the-installation-with-docker-compose).
 `make status` reports its timer and last service result; `make logs` follows the collector journal
 while the container is running. `make stop` stops it and keeps reports; `make clean` removes its
-report volume too. `make start` continues to start the demo infrastructure.
+report and log volumes too. `make start` continues to start the demo infrastructure.
 
 `make start` and `make run` offer **Local files only** or **Local files and SeaweedFS**.
 Reports are always saved locally. The selection applies even when reusing an environment:
