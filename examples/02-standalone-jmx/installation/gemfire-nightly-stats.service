@@ -1,0 +1,20 @@
+[Unit]
+Description=GemFire statistics collector over remote JMX
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=gemfire-stats
+Group=gemfire-stats
+StateDirectory=gemfire-nightly-stats
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/gemfire-nightly-stats
+EnvironmentFile=/etc/gemfire-nightly-stats/collector.env
+ExecStart=/opt/gemfire-nightly-stats/bin/collect-stats.sh collect --config /etc/gemfire-nightly-stats/collector.properties
+TimeoutStartSec=20min
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal

@@ -14,8 +14,8 @@ case "$ACTION" in
   run     Start the local environment and run the example (PROPERTIES=file uses your configuration)
   start   Start the locator, two servers, sample regions and SeaweedFS
   stop    Stop the environment, keeping reports and SeaweedFS data
-  status  Show the environment and cluster members
-  logs    Follow the locator log
+  status  Show the environment, cluster members and Ubuntu collector timer/result
+  logs    Follow the Ubuntu collector journal when running, otherwise the locator log
   admin   Open the SeaweedFS Admin UI in your browser
   test    Run an isolated integration test
   dist    Build ZIP and TAR distributions
@@ -25,12 +25,29 @@ Settings: SSL=true AUTH=false SERVER_COUNT=2 COLLECTION_INTERVAL_SECONDS=0
 start/run ask where to deliver reports. S3=true or S3=false bypasses the picker.
 run also asks for the collection interval. COLLECTION_INTERVAL_SECONDS skips that picker.
 COLLECTION_INTERVAL_SECONDS=60 repeats every minute; 0 keeps the normal schedule.
+run asks for local Java or Ubuntu systemd. RUN_MODE=local or ubuntu skips that picker.
+The Ubuntu timer requires a positive interval. status includes its timer and last service result.
 SeaweedFS always starts. Configuration is saved under .test-cluster/.
 HELP
     exit 0 ;;
   build) exec ./gradlew build --quiet ;;
   dist) exec ./gradlew assembleDist --quiet ;;
 esac
+
+# Keep this example independently usable without the repository dispatcher.
+if [[ "$ACTION" = run && -z "${RUN_MODE+x}" ]]; then
+  command -v fzf >/dev/null || { echo 'Install fzf, or set RUN_MODE=local or ubuntu.' >&2; exit 2; }
+  if ! execution=$(printf '%s\n' 'Local Java process' 'Ubuntu systemd installation' | fzf --prompt='Collector runtime > ' --height=8 --layout=reverse); then
+    echo 'Selection cancelled.'; exit 0
+  fi
+  case "$execution" in
+    'Local Java process') export RUN_MODE=local ;;
+    'Ubuntu systemd installation') export RUN_MODE=ubuntu ;;
+    *) echo "Unknown collector runtime: $execution" >&2; exit 2 ;;
+  esac
+fi
+RUN_MODE=${RUN_MODE:-local}
+case "$RUN_MODE" in local|ubuntu) ;; *) echo 'RUN_MODE must be local or ubuntu.' >&2; exit 2 ;; esac
 
 # Select delivery before starting or stopping any services. Explicit S3 skips the picker.
 if [[ ( "$ACTION" = start || "$ACTION" = run ) && -z "${S3+x}" ]]; then
@@ -51,7 +68,9 @@ if [[ "$ACTION" = run && -z "${COLLECTION_INTERVAL_SECONDS+x}" ]]; then
   command -v fzf >/dev/null || { echo 'Install fzf, or set COLLECTION_INTERVAL_SECONDS.' >&2; exit 2; }
   if [[ "$MODE" = embedded ]]; then normal_schedule='Nightly (configured time)';
   else normal_schedule='Once and exit'; fi
-  if ! interval=$(printf '%s\n' "$normal_schedule" 'Every 30 seconds' 'Every minute' 'Every 5 minutes' 'Every 15 minutes' \
+  intervals=('Every 30 seconds' 'Every minute' 'Every 5 minutes' 'Every 15 minutes')
+  if [[ "$RUN_MODE" != ubuntu ]]; then intervals=("$normal_schedule" "${intervals[@]}"); fi
+  if ! interval=$(printf '%s\n' "${intervals[@]}" \
       | fzf --prompt='Collection interval > ' --height=10 --layout=reverse); then
     echo 'Selection cancelled.'
     exit 0
@@ -129,6 +148,10 @@ done
 [[ "$COLLECTION_INTERVAL_SECONDS" =~ ^(0|[1-9][0-9]*)$ && "$COLLECTION_INTERVAL_SECONDS" -le 2147483647 ]] || {
   echo 'COLLECTION_INTERVAL_SECONDS must be an integer from 0 to 2147483647.' >&2; exit 2;
 }
+if [[ "$ACTION" = run && "$RUN_MODE" = ubuntu && "$COLLECTION_INTERVAL_SECONDS" = 0 ]]; then
+  echo 'Ubuntu systemd requires a positive COLLECTION_INTERVAL_SECONDS (for example, 30 or 60).' >&2
+  exit 2
+fi
 
 collection_settings_changed() {
   [[ "$S3" != "$saved_s3" || "$COLLECTION_INTERVAL_SECONDS" != "$saved_interval" ]]
@@ -167,13 +190,48 @@ load_s3() {
 }
 
 compose() { docker compose --env-file "$ENV_FILE" --file "$COMPOSE_FILE" "$@"; }
+installation_running() {
+  local container
+  container=$(compose --profile installation-test ps --status running --quiet collector-install-test) || return
+  [[ -n "$container" ]]
+}
+
+installation_status() {
+  echo 'Ubuntu collector:'
+  if installation_running; then
+    compose exec -T collector-install-test systemctl list-timers gemfire-nightly-stats.timer --no-pager
+    echo 'Last collection service result (inactive between runs is normal):'
+    compose exec -T collector-install-test systemctl show gemfire-nightly-stats.service \
+      --property=ActiveState,Result,ExecMainStatus,ExecMainExitTimestamp
+  else
+    echo 'Stopped. Use make run and select Ubuntu systemd installation.'
+  fi
+}
+
+run_installation() {
+  local source_config
+  source_config=$(absolute "${PROPERTIES:-$TEST_DIR/standalone.properties}")
+  [[ -r "$source_config" ]] || { echo "Cannot read collector properties: $source_config" >&2; return 2; }
+  mkdir -p "$TEST_DIR/installation-test"
+  export INSTALL_TEST_CONFIG="$TEST_DIR/installation-test/collector.properties"
+  cat "$source_config" > "$INSTALL_TEST_CONFIG.next"
+  printf '\nDELIVERY_MODE=%s\n' "$(if [[ "$S3" = true ]]; then echo s3; else echo local; fi)" >> "$INSTALL_TEST_CONFIG.next"
+  mv "$INSTALL_TEST_CONFIG.next" "$INSTALL_TEST_CONFIG"
+  ./gradlew assembleDist --quiet
+  export INSTALL_TEST_SOURCE_DIR="$PROJECT_DIR"
+  export INSTALL_TEST_INTERVAL_SECONDS="$COLLECTION_INTERVAL_SECONDS"
+  # The installer and application are mounted. Compose builds the harness image if missing.
+  compose --profile installation-test up -d --wait --force-recreate collector-install-test
+  installation_status
+  echo 'Ubuntu collector is running in the background. Use make status, make logs or make stop.'
+}
 wipe_s3() {
   if [[ -f "$ENV_FILE" ]]; then
-    compose down --volumes
+    compose --profile '*' down --volumes
   else
     # Compose still requires these variables to parse the configuration for down.
     AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused \
-      docker compose --file "$COMPOSE_FILE" down --volumes
+      docker compose --file "$COMPOSE_FILE" --profile '*' down --volumes
   fi
 }
 port_open() { lsof -nP -iTCP:"$1" -sTCP:LISTEN -t >/dev/null 2>&1; }
@@ -311,7 +369,7 @@ stop_members() {
 
 stop_stack() {
   stop_members
-  if [[ -f "$ENV_FILE" ]]; then compose down; fi
+  if [[ -f "$ENV_FILE" ]]; then compose --profile '*' down; fi
   echo 'Stopped locator, servers and SeaweedFS. Saved data is preserved.'
 }
 
@@ -413,8 +471,12 @@ case "$ACTION" in
     check_gemfire
     echo "Example: $MODE | Settings: $TEST_DIR"
     if running; then connect_args; "$GFSH" -e "$CONNECT" -e 'list members'; else echo 'GemFire is stopped.'; fi
-    if [[ -f "$ENV_FILE" ]]; then compose ps; fi ;;
+    if [[ -f "$ENV_FILE" ]]; then compose --profile '*' ps --all; installation_status; fi ;;
   logs)
+    if [[ -f "$ENV_FILE" ]] && installation_running; then
+      exec docker compose --env-file "$ENV_FILE" --file "$COMPOSE_FILE" exec -T collector-install-test \
+        journalctl -u gemfire-nightly-stats.service -f
+    fi
     [[ -f "$LOCATOR_DIR/test-locator.log" ]] || { echo 'No locator log. Run make start first.' >&2; exit 1; }
     exec tail -f "$LOCATOR_DIR/test-locator.log" ;;
   admin)
@@ -425,6 +487,11 @@ case "$ACTION" in
     elif command -v xdg-open >/dev/null; then exec xdg-open "$url";
     else echo "Open $url in your browser."; fi ;;
   run)
+    if [[ "$RUN_MODE" = ubuntu ]]; then
+      if [[ -z "${PROPERTIES:-}" ]]; then start_stack; else load_s3; fi
+      run_installation
+      exit 0
+    fi
     if [[ -n "${PROPERTIES:-}" ]]; then
       [[ -f "$PROPERTIES" ]] || { echo "Properties file not found: $PROPERTIES" >&2; exit 2; }
       ./gradlew build --quiet

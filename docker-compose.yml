@@ -33,5 +33,53 @@ services:
       retries: 60
     restart: unless-stopped
 
+  # Explicit opt-in: Ubuntu boots systemd and runs example 02's real VM installer.
+  collector-install-test:
+    profiles: [installation-test]
+    build:
+      context: ./examples/02-standalone-jmx/installation/docker
+      args:
+        UBUNTU_IMAGE: ${INSTALL_TEST_UBUNTU_IMAGE:-ubuntu:24.04}
+    privileged: true
+    cgroup: host
+    network_mode: host
+    stop_signal: SIGRTMIN+3
+    stop_grace_period: 30s
+    environment:
+      HOST_EXAMPLE_DIR: ${INSTALL_TEST_SOURCE_DIR:-}
+      INSTALL_TEST_INTERVAL_SECONDS: ${INSTALL_TEST_INTERVAL_SECONDS:-30}
+    tmpfs:
+      - /run
+      - /run/lock
+      - /tmp
+    volumes:
+      - type: bind
+        source: ./examples/02-standalone-jmx
+        target: /example
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${GEMFIRE_HOME:-./.missing-gemfire-home}
+        target: /opt/gemfire
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${INSTALL_TEST_CONFIG:-./examples/02-standalone-jmx/installation/collector.example.properties}
+        target: /input/collector.properties
+        read_only: true
+        bind:
+          create_host_path: false
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - collector-install-test-data:/var/lib/gemfire-nightly-stats
+    healthcheck:
+      test: [CMD-SHELL, "systemctl is-active --quiet collector-install-bootstrap.service && systemctl is-active --quiet gemfire-nightly-stats.timer"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+
 volumes:
   seaweedfs-data:
+  collector-install-test-data:

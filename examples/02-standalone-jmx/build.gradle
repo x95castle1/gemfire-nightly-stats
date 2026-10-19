@@ -29,6 +29,12 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 test {
+    // Deliberately conflicting values prove the collector reads credentials only from properties.
+    environment 'JMX_USERNAME', 'ignored-environment-user'
+    environment 'JMX_PASSWORD', 'ignored-environment-password'
+    environment 'JMX_TOKEN', 'ignored-environment-token'
+    environment 'AWS_ACCESS_KEY_ID', 'ignored-environment-key'
+    environment 'AWS_SECRET_ACCESS_KEY', 'ignored-environment-secret'
     useJUnitPlatform()
     testLogging {
         events 'failed'
@@ -54,6 +60,15 @@ distributions {
             from('sample-output.json')
             from('docker-compose.yml')
             from('.env.example')
+            from('installation') {
+                into 'installation'
+                exclude '**/*.sh'
+            }
+            from('installation') {
+                into 'installation'
+                include '**/*.sh'
+                filePermissions { unix('rwxr-xr-x') }
+            }
         }
     }
 }

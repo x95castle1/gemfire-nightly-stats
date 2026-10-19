@@ -181,6 +181,23 @@ class NightlyStatsMainTest {
     }
 
     @Test
+    void s3CredentialsMustBeInPropertiesEvenWhenEnvironmentCredentialsArePresent() throws Exception {
+        assertNotNull(System.getenv("AWS_ACCESS_KEY_ID"));
+        assertNotNull(System.getenv("AWS_SECRET_ACCESS_KEY"));
+        Properties p = s3Settings(1);
+        p.remove("S3_ACCESS_KEY");
+        p.remove("S3_SECRET_KEY");
+        NightlyStatsMain.Source unused = ignored -> { throw new AssertionError("Missing credentials must fail before collection"); };
+        Result missingKey = run("collect", p, unused);
+        assertEquals(2, missingKey.code());
+        assertTrue(missingKey.error().contains("S3_ACCESS_KEY"));
+        p.setProperty("S3_ACCESS_KEY", "configured-key");
+        Result missingSecret = run("collect", p, unused);
+        assertEquals(2, missingSecret.code());
+        assertTrue(missingSecret.error().contains("S3_SECRET_KEY"));
+    }
+
+    @Test
     void partialUploadFailureReportsCompletedUploadsAndRemainingBacklog() throws Exception {
         AtomicInteger attempts = new AtomicInteger();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

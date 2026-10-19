@@ -10,6 +10,11 @@ cp "$ROOT_DIR/Makefile" "$FIXTURE/Makefile"
 cat > "$FIXTURE/bin/fzf" <<'PICKER'
 #!/usr/bin/env bash
 choices=$(cat)
+if [[ "$*" = *'Collector runtime > '* ]]; then
+  if [[ "${PICK_RUNTIME:-}" = cancel ]]; then exit 130; fi
+  printf '%s\n' "${PICK_RUNTIME:-Local Java process}"
+  exit 0
+fi
 if [[ "$*" = *'Collection interval > '* ]]; then
   if [[ "${PICK_INTERVAL:-}" = cancel ]]; then exit 130; fi
   printf '%s\n' "${PICK_INTERVAL:-${choices%%$'\n'*}}"
@@ -33,6 +38,7 @@ fi
 printf '%s|%s|%s\n' "$(basename "$PWD")" "$1" "${TEST_DIR:-}" >> "$TRACE"
 printf '%s|%s|%s\n' "$(basename "$PWD")" "$1" "${S3:-unset}" >> "$DELIVERY_TRACE"
 printf '%s|%s|%s\n' "$(basename "$PWD")" "$1" "${COLLECTION_INTERVAL_SECONDS:-unset}" >> "$INTERVAL_TRACE"
+printf '%s|%s|%s\n' "$(basename "$PWD")" "$1" "${RUN_MODE:-unset}" >> "$RUNTIME_TRACE"
 CHILD
   chmod +x "$FIXTURE/examples/$example/scripts/dev.sh"
 done
@@ -47,15 +53,25 @@ printf 'gradle|%s\n' "$*" >> "$TRACE"
 GRADLE
 chmod +x "$FIXTURE/bin/docker" "$FIXTURE/gradlew"
 export PATH="$FIXTURE/bin:$PATH"
-export TRACE="$FIXTURE/trace" DELIVERY_TRACE="$FIXTURE/delivery-trace" INTERVAL_TRACE="$FIXTURE/interval-trace"
+export TRACE="$FIXTURE/trace" DELIVERY_TRACE="$FIXTURE/delivery-trace" INTERVAL_TRACE="$FIXTURE/interval-trace" RUNTIME_TRACE="$FIXTURE/runtime-trace"
 cd "$FIXTURE"
-unset EXAMPLE TEST_DIR PROPERTIES S3 COLLECTION_INTERVAL_SECONDS
+unset EXAMPLE TEST_DIR PROPERTIES S3 COLLECTION_INTERVAL_SECONDS RUN_MODE
 
 PICK=02-standalone-jmx scripts/examples.sh run
 [[ $(sed -n '1p' "$TRACE") = '02-standalone-jmx|start|' ]]
 [[ $(sed -n '2p' "$TRACE") = '02-standalone-jmx|run|' ]]
 [[ $(head -1 .test-cluster/active-example) = 02-standalone-jmx ]]
 [[ $(tail -1 "$DELIVERY_TRACE") = '02-standalone-jmx|run|false' ]]
+# Runtime cancellation and invalid Ubuntu intervals must leave the environment untouched.
+before=$(wc -l < "$TRACE")
+PICK_RUNTIME=cancel EXAMPLE=02 scripts/examples.sh run >/dev/null
+[[ $(wc -l < "$TRACE") = "$before" ]]
+if RUN_MODE=ubuntu EXAMPLE=02 S3=false COLLECTION_INTERVAL_SECONDS=0 scripts/examples.sh run >/dev/null 2>&1; then exit 1; fi
+if RUN_MODE=ubuntu EXAMPLE=01 S3=false COLLECTION_INTERVAL_SECONDS=30 scripts/examples.sh run >/dev/null 2>&1; then exit 1; fi
+[[ $(wc -l < "$TRACE") = "$before" ]]
+PICK_RUNTIME='Ubuntu systemd installation' PICK_INTERVAL='Every minute' EXAMPLE=02 S3=false scripts/examples.sh run
+[[ $(tail -1 "$RUNTIME_TRACE") = '02-standalone-jmx|run|ubuntu' ]]
+[[ $(tail -1 "$INTERVAL_TRACE") = '02-standalone-jmx|run|60' ]]
 # Explicit upload settings bypass the delivery picker; delivery cancellation changes nothing.
 before=$(wc -l < "$TRACE")
 PICK_UPLOAD=cancel EXAMPLE=01 scripts/examples.sh start >/dev/null
@@ -136,7 +152,7 @@ EXAMPLE=02 S3=false scripts/examples.sh start
 scripts/examples.sh stop
 scripts/examples.sh clean
 grep -q '^02-standalone-jmx|clean|' "$TRACE"
-grep -q '^docker|compose .*down --volumes$' "$TRACE"
+grep -q '^docker|compose .*--profile \* down --volumes$' "$TRACE"
 [[ ! -d .test-cluster ]]
 
 for target in start-locator start-servers create-regions run-embedded collect collect-standalone test-embedded test-standalone s3-up s3-down; do

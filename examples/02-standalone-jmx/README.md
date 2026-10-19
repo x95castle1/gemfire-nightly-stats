@@ -66,7 +66,7 @@ With `UPLOAD_REQUIRED=false` (the default), `collect` returns success after savi
 
 ### Authentication, TLS and scheduling
 
-Set `JMX_USERNAME` and `JMX_PASSWORD`, or `JMX_TOKEN`. These settings fall back to environment variables of the same names. Username/password and token authentication are mutually exclusive. With a security manager, the account needs permission to read the management data and run `describe config`; verify the intended reader role against your security manager. A denied TLS lookup is logged and remains `null`, as with the embedded collector.
+Set `JMX_USERNAME` and `JMX_PASSWORD`, or `JMX_TOKEN`, in the properties file. All JMX, TLS and S3 credentials are read only from that file; process environment credentials are ignored. Username/password and token authentication are mutually exclusive. With a security manager, the account needs permission to read the management data and run `describe config`; verify the intended reader role against your security manager. A denied TLS lookup is logged and remains `null`, as with the embedded collector.
 
 For SSL or mutual TLS, use the `gemfire.ssl-*` settings in `standalone.properties.example`. The connector uses GemFire's SSL configuration and socket factory, including its client certificate and truststore. It does not replace the JVM's default SSL context or truststore; S3 HTTPS continues to use the JVM defaults. Set `gemfire.ssl-endpoint-identification-enabled=true` and ensure the manager's advertised hostname matches its certificate. The default `JMX_TIMEOUT_SECONDS=120` bounds the connection, collection and connection close together. A timed-out remote worker cannot write a report; the one-shot process terminates after its local delivery/summary work finishes.
 
@@ -88,6 +88,18 @@ The commands write JSON results to stdout and diagnostics to stderr. Exit status
 | 4 | Required delivery incomplete, or explicit `upload-pending` still has pending reports |
 
 ### Distribution and tests
+
+For an Ubuntu VM, use the [systemd installer](installation/README.md). It checks an existing
+Java/GemFire installation, installs a dedicated service account, example configuration and a
+timer (one minute by default, configurable down to 30 seconds for demos). It installs no Java
+runtime or packages. The complete `installation/` directory is included in the distributions.
+The [Docker Compose installation test](installation/README.md#test-the-installation-with-docker-compose)
+boots Ubuntu with systemd, runs the real installer automatically, and verifies scheduled reports
+and optional S3 uploads using the `installation-test` profile.
+Select **Ubuntu systemd installation** in `make run`, or use
+`make run RUN_MODE=ubuntu S3=true COLLECTION_INTERVAL_SECONDS=60` from this directory.
+The timer stays running in the background; `make status` shows its next activation and last
+service result, `make logs` follows its journal, and `make stop` stops it.
 
 `./gradlew assembleDist` builds ZIP and TAR distributions in
 `build/distributions/`. Each includes `lib/02-standalone-jmx.jar`,

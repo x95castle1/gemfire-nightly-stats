@@ -27,9 +27,9 @@ final class RemoteJmx {
     static void validate(StatsSettings settings) {
         endpoint(settings);
         settings.positiveInt("JMX_TIMEOUT_SECONDS", 120);
-        String user = settings.secret("JMX_USERNAME", "JMX_USERNAME");
-        String password = settings.secret("JMX_PASSWORD", "JMX_PASSWORD");
-        String token = settings.secret("JMX_TOKEN", "JMX_TOKEN");
+        String user = settings.get("JMX_USERNAME", null);
+        String password = settings.get("JMX_PASSWORD", null);
+        String token = settings.get("JMX_TOKEN", null);
         if ((user == null) != (password == null)) {
             throw new IllegalArgumentException("Set both JMX_USERNAME and JMX_PASSWORD, or neither");
         }
@@ -54,11 +54,11 @@ final class RemoteJmx {
     static Map<String, Object> collect(StatsSettings settings) throws Exception {
         validate(settings);
         Map<String, Object> environment = new HashMap<>();
-        String user = settings.secret("JMX_USERNAME", "JMX_USERNAME");
-        String token = settings.secret("JMX_TOKEN", "JMX_TOKEN");
+        String user = settings.get("JMX_USERNAME", null);
+        String token = settings.get("JMX_TOKEN", null);
         if (token != null) environment.put(JMXConnector.CREDENTIALS, token);
         else if (user != null) environment.put(JMXConnector.CREDENTIALS,
-                new String[] {user, settings.secret("JMX_PASSWORD", "JMX_PASSWORD")});
+                new String[] {user, settings.get("JMX_PASSWORD", null)});
 
         Properties ssl = settings.gemfireProperties();
         boolean encrypted = SSLConfigurationFactory.getSSLConfigForComponent(

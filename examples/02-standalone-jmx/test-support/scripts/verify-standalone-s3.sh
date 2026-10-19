@@ -21,8 +21,8 @@ PREFIX="regression/$RUN_ID"
 FOLDER="${S3_ENDPOINT%/}/$S3_BUCKET/$PREFIX/local/test-cluster"
 S3_CONFIG="$TEST_ROOT/s3.properties"
 cp "$CONFIG" "$S3_CONFIG"
-printf '\nDELIVERY_MODE=s3\nUPLOAD_REQUIRED=true\nS3_ENDPOINT=%s\nS3_BUCKET=%s\nS3_PREFIX=%s\n' \
-  "$S3_ENDPOINT" "$S3_BUCKET" "$PREFIX" >> "$S3_CONFIG"
+printf '\nDELIVERY_MODE=s3\nUPLOAD_REQUIRED=true\nS3_ENDPOINT=%s\nS3_BUCKET=%s\nS3_PREFIX=%s\nS3_ACCESS_KEY=%s\nS3_SECRET_KEY=%s\n' \
+  "$S3_ENDPOINT" "$S3_BUCKET" "$PREFIX" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >> "$S3_CONFIG"
 verify_bytes() {
   "$PROJECT_DIR"/test-support/scripts/verify-upload.sh "${1:-$REPORT}" "$FOLDER" "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY"
 }

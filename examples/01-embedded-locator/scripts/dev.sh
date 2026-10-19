@@ -169,11 +169,11 @@ load_s3() {
 compose() { docker compose --env-file "$ENV_FILE" --file "$COMPOSE_FILE" "$@"; }
 wipe_s3() {
   if [[ -f "$ENV_FILE" ]]; then
-    compose down --volumes
+    compose --profile '*' down --volumes
   else
     # Compose still requires these variables to parse the configuration for down.
     AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused \
-      docker compose --file "$COMPOSE_FILE" down --volumes
+      docker compose --file "$COMPOSE_FILE" --profile '*' down --volumes
   fi
 }
 port_open() { lsof -nP -iTCP:"$1" -sTCP:LISTEN -t >/dev/null 2>&1; }
@@ -311,7 +311,7 @@ stop_members() {
 
 stop_stack() {
   stop_members
-  if [[ -f "$ENV_FILE" ]]; then compose down; fi
+  if [[ -f "$ENV_FILE" ]]; then compose --profile '*' down; fi
   echo 'Stopped locator, servers and SeaweedFS. Saved data is preserved.'
 }
 

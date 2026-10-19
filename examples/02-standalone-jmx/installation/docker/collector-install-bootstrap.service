@@ -1,0 +1,16 @@
+[Unit]
+Description=Run the real collector installer in the Ubuntu test container
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/collector-install-test.env
+ExecStart=/usr/local/bin/install-on-boot.sh
+RemainAfterExit=yes
+TimeoutStartSec=120
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

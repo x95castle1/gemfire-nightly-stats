@@ -19,8 +19,8 @@ case "$ACTION" in
   run     Pick an example with fzf and run it
   start   Pick an example and start its locator, servers, regions and SeaweedFS
   stop    Stop the active environment, keeping its data
-  status  Show the active environment and members
-  logs    Follow the active locator log
+  status  Show the active environment, members and Ubuntu collector timer/result
+  logs    Follow the Ubuntu collector journal when running, otherwise the locator log
   admin   Open the SeaweedFS Admin UI in your browser
   test    Pick an example and run its integration checks
   dist    Build both ZIP and TAR distributions
@@ -31,6 +31,7 @@ start/run also ask where to deliver reports. S3=true or S3=false bypasses that p
 SSL=false disables GemFire TLS. SeaweedFS starts even when uploads are disabled.
 run also asks for the collection interval. COLLECTION_INTERVAL_SECONDS skips that picker.
 COLLECTION_INTERVAL_SECONDS=60 repeats every minute; 0 keeps the normal schedule.
+For example 02, run asks for local Java or Ubuntu systemd. RUN_MODE=local or ubuntu skips that picker.
 HELP
     exit 0 ;;
   build) exec ./gradlew build --quiet ;;
@@ -128,10 +129,10 @@ if [[ "$ACTION" = clean ]]; then
   env_file=${ENV_FILE:-$ROOT_DIR/.env}
   project=${COMPOSE_PROJECT_NAME:-$(basename "$ROOT_DIR")}
   if [[ -f "$env_file" ]]; then
-    docker compose --project-name "$project" --env-file "$env_file" --file "$compose_file" down --volumes
+    docker compose --project-name "$project" --env-file "$env_file" --file "$compose_file" --profile '*' down --volumes
   else
     AWS_ACCESS_KEY_ID=unused AWS_SECRET_ACCESS_KEY=unused \
-      docker compose --project-name "$project" --file "$compose_file" down --volumes
+      docker compose --project-name "$project" --file "$compose_file" --profile '*' down --volumes
   fi
   ./gradlew clean --quiet
   rm -rf "$ROOT_DIR/.test-cluster" "$ROOT_DIR/examples/01-embedded-locator/.test-cluster" "$ROOT_DIR/examples/02-standalone-jmx/.test-cluster"
@@ -170,6 +171,26 @@ if [[ "$ACTION" = stop && -n "$active" && "$selected" != "$active" ]]; then
   exit 2
 fi
 
+# Select how example 02 runs before changing the active environment.
+if [[ "$ACTION" = run && "$selected" = 02-standalone-jmx && -z "${RUN_MODE+x}" ]]; then
+  command -v fzf >/dev/null || { echo 'Install fzf, or set RUN_MODE=local or ubuntu.' >&2; exit 2; }
+  if ! execution=$(printf '%s\n' 'Local Java process' 'Ubuntu systemd installation' | fzf --prompt='Collector runtime > ' --height=8 --layout=reverse); then
+    echo 'Selection cancelled.'; exit 0
+  fi
+  case "$execution" in
+    'Local Java process') export RUN_MODE=local ;;
+    'Ubuntu systemd installation') export RUN_MODE=ubuntu ;;
+    *) echo "Unknown collector runtime: $execution" >&2; exit 2 ;;
+  esac
+fi
+if [[ "$ACTION" = run ]]; then
+  case "${RUN_MODE:-local}" in
+    local) ;;
+    ubuntu) [[ "$selected" = 02-standalone-jmx ]] || { echo 'RUN_MODE=ubuntu requires EXAMPLE=02.' >&2; exit 2; } ;;
+    *) echo 'RUN_MODE must be local or ubuntu.' >&2; exit 2 ;;
+  esac
+fi
+
 # Select delivery before starting or stopping any services. Explicit S3 skips the picker.
 if [[ ( "$ACTION" = start || "$ACTION" = run ) && -z "${S3+x}" ]]; then
   command -v fzf >/dev/null || { echo 'Install fzf, or set S3=true or S3=false.' >&2; exit 2; }
@@ -189,7 +210,9 @@ if [[ "$ACTION" = run && -z "${COLLECTION_INTERVAL_SECONDS+x}" ]]; then
   command -v fzf >/dev/null || { echo 'Install fzf, or set COLLECTION_INTERVAL_SECONDS.' >&2; exit 2; }
   if [[ "$selected" = 01-embedded-locator ]]; then normal_schedule='Nightly (configured time)';
   else normal_schedule='Once and exit'; fi
-  if ! interval=$(printf '%s\n' "$normal_schedule" 'Every 30 seconds' 'Every minute' 'Every 5 minutes' 'Every 15 minutes' \
+  intervals=('Every 30 seconds' 'Every minute' 'Every 5 minutes' 'Every 15 minutes')
+  if [[ "${RUN_MODE:-local}" != ubuntu ]]; then intervals=("$normal_schedule" "${intervals[@]}"); fi
+  if ! interval=$(printf '%s\n' "${intervals[@]}" \
       | fzf --prompt='Collection interval > ' --height=10 --layout=reverse); then
     echo 'Selection cancelled.'
     exit 0
@@ -202,6 +225,13 @@ if [[ "$ACTION" = run && -z "${COLLECTION_INTERVAL_SECONDS+x}" ]]; then
     'Every 15 minutes') export COLLECTION_INTERVAL_SECONDS=900 ;;
     *) echo "Unknown collection interval: $interval" >&2; exit 2 ;;
   esac
+fi
+
+if [[ "$ACTION" = run && "${RUN_MODE:-local}" = ubuntu ]]; then
+  [[ "${COLLECTION_INTERVAL_SECONDS:-0}" =~ ^[1-9][0-9]{0,9}$ && "$COLLECTION_INTERVAL_SECONDS" -le 2147483647 ]] || {
+    echo 'Ubuntu systemd requires COLLECTION_INTERVAL_SECONDS from 1 to 2147483647 (for example, 30 or 60).' >&2
+    exit 2
+  }
 fi
 
 if [[ "$recovered" = true && "$ACTION" != test ]]; then

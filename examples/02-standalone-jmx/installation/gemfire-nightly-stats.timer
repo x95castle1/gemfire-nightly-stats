@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule the GemFire statistics collector
+
+[Timer]
+OnActiveSec=10s
+OnUnitInactiveSec=60s
+AccuracySec=1s
+Unit=gemfire-nightly-stats.service
+
+[Install]
+WantedBy=timers.target

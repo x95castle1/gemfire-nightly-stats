@@ -16,15 +16,16 @@ Docker must be running; the local environment also uses `jq`, `keytool`, `lsof` 
 ```sh
 make start    # choose an example and report delivery with fzf; start the environment
 make run      # choose an example and report delivery; reuse or start its environment
-make status   # show the active example, members and SeaweedFS
-make logs     # follow the locator log
+make status   # show members, containers and the Ubuntu collector timer/result
+make logs     # follow the Ubuntu collector journal when running, otherwise the locator log
 make admin    # open the SeaweedFS Admin UI in your browser
 make stop     # stop locator, servers and SeaweedFS; keep saved data
 ```
 
 By default, `make run` for example 01 installs the collector through locator startup. Its first local report
-is scheduled after 60 seconds, followed by nightly runs. For example 02, `make run` collects once
-through remote JMX and exits. Selecting a different example stops the previous managed environment
+is scheduled after 60 seconds, followed by nightly runs. For example 02, `make run` offers a local
+Java process or the Ubuntu systemd installation. Local Java collects once through remote JMX
+with the default interval. Selecting a different example stops the previous managed environment
 before starting the new one. `stop`, `status` and `logs` remember the active example and its settings.
 
 The runner verifies GemFire PID files against the ports each process owns. If an interrupted
@@ -47,6 +48,25 @@ example's `.test-cluster/` directory. `TEST_DIR` overrides that location. Settin
 `SSL`, `AUTH`, `SERVER_COUNT`, `LOCATOR_PORT`, `JMX_PORT` and `SERVER_PORT_BASE` can be supplied
 on the command line; stop the environment before changing them.
 
+For example 02, choose **Ubuntu systemd installation** in `make run` to build the application,
+boot the Ubuntu container, run the VM installer, and leave its timer running in the background.
+Choose the upload setting and a positive interval (30 seconds, one minute, five or fifteen minutes).
+To bypass all pickers:
+
+```sh
+make run EXAMPLE=02 RUN_MODE=ubuntu S3=true COLLECTION_INTERVAL_SECONDS=60
+make status
+make logs
+make stop
+```
+
+`RUN_MODE=local` selects the local Java process. The Ubuntu option requires Docker Desktop host
+networking for the laptop demo's JMX/RMI endpoint and uses a privileged container for systemd.
+See the [installation test instructions](examples/02-standalone-jmx/installation/README.md#test-the-installation-with-docker-compose).
+`make status` reports its timer and last service result; `make logs` follows the collector journal
+while the container is running. `make stop` stops it and keeps reports; `make clean` removes its
+report volume too. `make start` continues to start the demo infrastructure.
+
 `make start` and `make run` offer **Local files only** or **Local files and SeaweedFS**.
 Reports are always saved locally. The selection applies even when reusing an environment:
 changing delivery for example 01 restarts its locator and servers, preserving data; example 02
@@ -62,7 +82,7 @@ configured Admin UI port, including overrides saved by `make start`.
 
 | Choice | Use |
 |---|---|
-| Nightly (configured time) / Once and exit | Normal schedule for embedded / standalone |
+| Nightly (configured time) / Once and exit | Normal schedule for embedded / local standalone Java |
 | Every 30 seconds | Fast demo after startup |
 | Every minute | Recommended demo interval |
 | Every 5 minutes | Longer demos |
@@ -82,8 +102,9 @@ make run COLLECTION_INTERVAL_SECONDS=60    # choose example 02 for a foreground 
 ```
 
 Example 01 first collects 60 seconds after locator startup, then waits the configured interval
-between completed runs. Example 02 collects immediately, waits the interval, and repeats until
-Ctrl-C; the cluster keeps running afterward. `make start` for example 02 only prepares the cluster.
+between completed runs. Example 02's local Java mode collects immediately, waits the interval, and repeats until
+Ctrl-C; the cluster keeps running afterward. Ubuntu mode uses the systemd timer, with a first
+run after about ten seconds. `make start` for example 02 only prepares the cluster.
 The interval is remembered with the environment; the next `make run` lets you choose again. Set `COLLECTION_INTERVAL_SECONDS=0` to restore
 nightly embedded collection (02:00 local time) or one-shot standalone collection. Embedded
 interval changes restart the locator and servers. Each collection creates a new JSON file and,

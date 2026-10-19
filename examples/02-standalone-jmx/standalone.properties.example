@@ -10,7 +10,7 @@ JMX_PORT=1099
 # Total budget for the JMX connection, collection and closing the connection.
 JMX_TIMEOUT_SECONDS=120
 
-# Optional authentication. These also fall back to environment variables with the same names.
+# Optional authentication. Credentials are read only from this properties file.
 # JMX_USERNAME=reader
 # JMX_PASSWORD=
 # Alternatively, a bearer token (cannot be combined with username/password):
@@ -35,7 +35,7 @@ UPLOAD_REQUIRED=false
 # S3_BUCKET=gemfire-stats
 # S3_REGION=us-east-1
 # S3_PREFIX=nightly-stats
-# Keys default to AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the environment.
+# S3 credentials are read only from this properties file.
 # S3_ACCESS_KEY=
 # S3_SECRET_KEY=
 

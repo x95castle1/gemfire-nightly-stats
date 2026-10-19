@@ -127,6 +127,17 @@ class RemoteJmxTest {
         assertThrows(IllegalArgumentException.class, () -> RemoteJmx.validate(new StatsSettings(p)));
     }
 
+    @Test
+    void credentialsInPropertiesAreUnaffectedByConflictingEnvironmentCredentials() {
+        assertNotNull(System.getenv("JMX_USERNAME"));
+        assertNotNull(System.getenv("JMX_TOKEN"));
+        Properties p = settings(1099);
+        assertDoesNotThrow(() -> RemoteJmx.validate(new StatsSettings(p)));
+        p.setProperty("JMX_USERNAME", "configured-reader");
+        p.setProperty("JMX_PASSWORD", "configured-password");
+        assertDoesNotThrow(() -> RemoteJmx.validate(new StatsSettings(p)));
+    }
+
     private static CompositeData composite(Map<String, Object> values) throws OpenDataException {
         String[] keys = values.keySet().toArray(String[]::new);
         OpenType<?>[] types = new OpenType<?>[keys.length];

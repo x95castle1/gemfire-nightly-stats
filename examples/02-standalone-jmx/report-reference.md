@@ -53,7 +53,7 @@ If `S3_ENDPOINT` is set, the collector also uploads each report to that S3-compa
 | `S3_BUCKET` | required | e.g. `gemfire-stats` |
 | `S3_REGION` | `us-east-1` | Used for signing. SeaweedFS and MinIO accept any value |
 | `S3_PREFIX` | `nightly-stats` | Start of every object key |
-| `S3_ACCESS_KEY`, `S3_SECRET_KEY` | the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables | So keys can stay out of the properties file |
+| `S3_ACCESS_KEY`, `S3_SECRET_KEY` | required for S3 delivery | Set both in the collector properties file; this is the sole credential source |
 
 - Each report goes to `<S3_PREFIX>/<ENV>/<CLUSTER_NAME>/<CLUSTER_NAME>-<timestamp>-<uuid>.json`, e.g. `nightly-stats/local/test-cluster/test-cluster-2026-10-15T143000.123-0500-86b3f35e-2451-4a80-a773-eec6f465013b.json`. Requests are path-style (`<endpoint>/<bucket>/<key>`). With upload on, `ENV` and `CLUSTER_NAME` may only contain letters, numbers, dots, underscores and hyphens.
 - Each successful upload writes a receipt to `<NIGHTLY_STATS_DIR>/.uploaded/`: the destination, the object key and the file's SHA-256. A report without a matching receipt is pending. Every collection has its own filename, object key and receipt. Failed uploads are retried under that same key; new collections use new keys. Legacy date-only reports remain supported.
@@ -77,7 +77,7 @@ make stop            # stop services, preserving saved reports and SeaweedFS dat
 make clean           # permanently delete builds, test files and SeaweedFS volume
 ```
 
-To upload from your own locator, add `S3_ENDPOINT=http://localhost:8333` and `S3_BUCKET=gemfire-stats` to the example configuration, and pass the keys from `.env` as properties or environment variables.
+To upload from the standalone collector, set `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY` and `S3_SECRET_KEY` in its properties file. The local Docker demo generates that file from its SeaweedFS settings; the collector itself reads credentials only from the generated properties.
 
 
 ## Historical verification

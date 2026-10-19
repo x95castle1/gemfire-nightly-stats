@@ -12,10 +12,21 @@ OPEN
 cat > "$FIXTURE/bin/docker" <<'DOCKER'
 #!/usr/bin/env bash
 printf 'docker|%s\n' "$*" >> "$TRACE"
+if [[ "$*" = *'ps --status running --quiet collector-install-test' && "${MOCK_INSTALLATION_RUNNING:-false}" = true ]]; then
+  echo fixture-container
+fi
+if [[ "$*" = *'up -d --wait --force-recreate collector-install-test' ]]; then
+  printf '%s\n%s\n%s\n' "$INSTALL_TEST_SOURCE_DIR" "$INSTALL_TEST_CONFIG" "$INSTALL_TEST_INTERVAL_SECONDS" > "$INSTALLATION_METADATA"
+fi
 DOCKER
 cat > "$FIXTURE/bin/fzf" <<'PICKER'
 #!/usr/bin/env bash
 choices=$(cat)
+if [[ "$*" = *'Collector runtime > '* ]]; then
+  if [[ "${PICK_RUNTIME:-}" = cancel ]]; then exit 130; fi
+  printf '%s\n' "${PICK_RUNTIME:-Local Java process}"
+  exit 0
+fi
 if [[ "$*" = *'Collection interval > '* ]]; then
   if [[ "${PICK_INTERVAL:-}" = cancel ]]; then exit 130; fi
   printf '%s\n' "${PICK_INTERVAL:-${choices%%$'\n'*}}"
@@ -41,9 +52,9 @@ if [[ $(grep -c '^sleep|' "$TRACE") -ge 2 ]]; then exit 99; fi
 SLEEP
 printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/gemfire/bin/gfsh"
 chmod +x "$FIXTURE/bin/"* "$FIXTURE/gemfire/bin/gfsh"
-export PATH="$FIXTURE/bin:$PATH" GEMFIRE_HOME="$FIXTURE/gemfire" TRACE="$FIXTURE/trace" INTERVAL_TRACE="$FIXTURE/interval-trace"
+export PATH="$FIXTURE/bin:$PATH" GEMFIRE_HOME="$FIXTURE/gemfire" TRACE="$FIXTURE/trace" INTERVAL_TRACE="$FIXTURE/interval-trace" INSTALLATION_METADATA="$FIXTURE/installation-metadata"
 export LOCATOR_PORT=1 JMX_PORT=2
-unset TEST_DIR ENV_FILE COMPOSE_FILE COMPOSE_PROJECT_NAME ADMIN_UI_PORT S3 COLLECTION_INTERVAL_SECONDS PROPERTIES
+unset TEST_DIR ENV_FILE COMPOSE_FILE COMPOSE_PROJECT_NAME ADMIN_UI_PORT S3 COLLECTION_INTERVAL_SECONDS PROPERTIES RUN_MODE
 unset MAKEFLAGS MFLAGS MAKEOVERRIDES
 for name in 01-embedded-locator 02-standalone-jmx; do
   example="$FIXTURE/$name"
@@ -104,6 +115,22 @@ for name in 01-embedded-locator 02-standalone-jmx; do
     cmp custom.properties original.properties
 
     if [[ "$name" = 02* ]]; then
+      before=$(wc -l < "$TRACE")
+      PICK_RUNTIME=cancel PROPERTIES=custom.properties make run >/dev/null
+      [[ $(wc -l < "$TRACE") = "$before" ]]
+      if RUN_MODE=ubuntu S3=false COLLECTION_INTERVAL_SECONDS=0 PROPERTIES=custom.properties make run >/dev/null 2>&1; then exit 1; fi
+      [[ $(wc -l < "$TRACE") = "$before" ]]
+      PICK_RUNTIME='Ubuntu systemd installation' PICK_INTERVAL='Every minute' S3=false PROPERTIES=custom.properties MOCK_INSTALLATION_RUNNING=true make run >/dev/null
+      [[ $(sed -n '1p' "$INSTALLATION_METADATA") = "$example" ]]
+      [[ $(sed -n '3p' "$INSTALLATION_METADATA") = 60 ]]
+      installed_config=$(sed -n '2p' "$INSTALLATION_METADATA")
+      [[ $(sed -n 's/^DELIVERY_MODE=//p' "$installed_config" | tail -1) = local ]]
+      cmp custom.properties original.properties
+      MOCK_INSTALLATION_RUNNING=true make status >/dev/null
+      grep -q 'systemctl list-timers gemfire-nightly-stats.timer' "$TRACE"
+      grep -q 'systemctl show gemfire-nightly-stats.service' "$TRACE"
+      MOCK_INSTALLATION_RUNNING=true make logs >/dev/null
+      [[ $(tail -1 "$TRACE") = *'journalctl -u gemfire-nightly-stats.service -f' ]]
       : > "$TRACE"
       # A failed collection retries, with no overlapping processes; stop after two fake sleeps.
       if RETRY_TEST=true S3=false COLLECTION_INTERVAL_SECONDS=60 PROPERTIES=custom.properties make run >/dev/null 2>&1; then exit 1; fi

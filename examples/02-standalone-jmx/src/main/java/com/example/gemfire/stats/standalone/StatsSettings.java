@@ -28,19 +28,6 @@ public final class StatsSettings {
         return value;
     }
 
-    public String secret(String key, String environmentVariable) {
-        String value = get(key, System.getenv(environmentVariable));
-        return value == null || value.isBlank() ? null : value;
-    }
-
-    private String requiredSecret(String key, String environmentVariable) {
-        String value = secret(key, environmentVariable);
-        if (value == null) {
-            throw new IllegalArgumentException("Missing " + key + " (or environment variable " + environmentVariable + ")");
-        }
-        return value;
-    }
-
     public boolean bool(String key, boolean fallback) {
         String value = get(key, Boolean.toString(fallback));
         if (!value.equalsIgnoreCase("true") && !value.equalsIgnoreCase("false")) {
@@ -87,8 +74,8 @@ public final class StatsSettings {
         };
         if (send) {
             S3Uploader uploader = new S3Uploader(endpoint, bucket, get("S3_REGION", "us-east-1"),
-                    requiredSecret("S3_ACCESS_KEY", "AWS_ACCESS_KEY_ID"),
-                    requiredSecret("S3_SECRET_KEY", "AWS_SECRET_ACCESS_KEY"));
+                    required("S3_ACCESS_KEY"),
+                    required("S3_SECRET_KEY"));
             sink = (key, content) -> {
                 ReportStore.verifyIdentity(content, env, cluster);
                 uploader.put(key, content, "application/json");

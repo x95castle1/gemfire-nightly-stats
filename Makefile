@@ -10,8 +10,8 @@ build: ## Build and test the source
 run: ## Run the example
 start: ## Start the locator, servers, regions and SeaweedFS
 stop: ## Stop the environment and keep its data
-status: ## Show the environment status
-logs: ## Follow the locator log
+status: ## Show the environment and Ubuntu collector status
+logs: ## Follow the collector journal or locator log
 admin: ## Open the SeaweedFS Admin UI in your browser
 test: ## Run the integration checks
 dist: ## Build ZIP and TAR distributions
