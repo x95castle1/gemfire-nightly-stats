@@ -18,7 +18,7 @@ def executable(path, body):
 
 
 with tempfile.TemporaryDirectory(prefix="collector-install-check-") as temporary:
-    root = Path(temporary)
+    root = Path(temporary).resolve()
     source = root / "source"
     shutil.copytree(PROJECT / "installation", source / "installation")
     (source / "lib").mkdir()
@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix="collector-install-check-") as temporary
         "/opt/gemfire-nightly-stats": str(root / "app"),
         "/etc/gemfire-nightly-stats": str(root / "config"),
         "/var/lib/gemfire-nightly-stats": str(root / "state"),
-        "/var/log/gemfire-nightly-stats": str(root / "logs"),
+        "/var/log": str(root / "logs"),
         "/etc/logrotate.d": str(root / "logrotate.d"),
         "/etc/systemd/system": str(units),
         "/etc/os-release": str(root / "os-release"),
@@ -126,12 +126,18 @@ esac''')
     assert (root / "app/lib/02-standalone-jmx.jar").read_bytes() == b"example-jar"
     assert (root / "app/bin/stop.sh").read_text() == stopper.read_text()
     assert stat.S_IMODE((root / "app/bin/stop.sh").stat().st_mode) == 0o755
-    log = root / "logs/collector.log"
+    log = root / "logs/gemfire-nightly-stats/collector.log"
     assert log.exists()
     assert stat.S_IMODE(log.stat().st_mode) == 0o640
     assert stat.S_IMODE(log.parent.stat().st_mode) == 0o750
     assert stat.S_IMODE((root / "app/bin/collect-stats-logged.sh").stat().st_mode) == 0o755
-    assert (root / "logrotate.d/gemfire-nightly-stats").read_text() == (PROJECT / "installation/gemfire-nightly-stats.logrotate").read_text()
+    rotation = root / "logrotate.d/gemfire-nightly-stats"
+    default_rotation = (PROJECT / "installation/gemfire-nightly-stats.logrotate").read_text().replace("/var/log", str(root / "logs"))
+    assert rotation.read_text() == default_rotation
+    logging = units / "gemfire-nightly-stats.service.d/zz-collector-logging.conf"
+    assert "LogsDirectory=\nLogsDirectory=gemfire-nightly-stats\n" in logging.read_text()
+    assert "Environment=COLLECTOR_LOG_LEVEL=INFO\n" in logging.read_text()
+    assert "Environment=COLLECTOR_GEMFIRE_LOG_LEVEL=WARN\n" in logging.read_text()
     log.write_text("previous collection log\n")
     assert "OnUnitInactiveSec=60s" in (units / "gemfire-nightly-stats.timer").read_text()
     assert "restart" not in (root / "trace").read_text()
@@ -244,6 +250,47 @@ esac''')
     assert not any(line.startswith("OnCalendar=") and line != "OnCalendar=" for line in interval_lines)
     assert "OnActiveSec=10s" in interval_lines and "OnUnitInactiveSec=30s" in interval_lines
 
+    # Properties configure the log path, rotation and Java levels without duplicating settings in env.
+    custom_log = root / "logs/demo-custom/demo.log"
+    custom.write_text(f"ENV=logging-test\nLOG_DIR={custom_log.parent}\nLOG_FILE_NAME=demo.log\n"
+                      "LOG_ROTATE_INTERVAL=weekly\nLOG_ROTATE_SIZE=25M\nLOG_ROTATE_COUNT=3\n"
+                      'LOG_LEVEL=invalid-earlier-entry\nLOG_LEVEL="debug"\nGEMFIRE_LOG_LEVEL=error\n')
+    run("--config", str(custom), "--no-start")
+    assert custom_log.exists()
+    assert stat.S_IMODE(custom_log.stat().st_mode) == 0o640
+    assert stat.S_IMODE(custom_log.parent.stat().st_mode) == 0o750
+    assert rotation.read_text() == default_rotation.replace(str(log), str(custom_log)).replace("    daily", "    weekly").replace("maxsize 10M", "maxsize 25M").replace("rotate 14", "rotate 3")
+    assert "LogsDirectory=\nLogsDirectory=demo-custom\n" in logging.read_text()
+    assert f"Environment=COLLECTOR_LOG_FILE={custom_log}\n" in logging.read_text()
+    assert "Environment=COLLECTOR_LOG_LEVEL=DEBUG\n" in logging.read_text()
+    assert "Environment=COLLECTOR_GEMFIRE_LOG_LEVEL=ERROR\n" in logging.read_text()
+    assert "LOG_LEVEL" not in env_file.read_text()
+    custom_log.write_text("retain custom log\n")
+    configured_logging = logging.read_text()
+    configured_rotation = rotation.read_text()
+    run("--no-start")
+    assert logging.read_text() == configured_logging
+    assert rotation.read_text() == configured_rotation
+    # Reject invalid settings before stopping services or replacing any installed files.
+    installed_config = config.read_text()
+    for invalid in (f"LOG_DIR={root}/outside", f"LOG_DIR={root}/logs/../outside",
+                    "LOG_FILE_NAME=../bad", "LOG_FILE_NAME=bad name", "LOG_ROTATE_INTERVAL=hourly",
+                    "LOG_ROTATE_SIZE=0M", "LOG_ROTATE_SIZE=10M;bad", "LOG_ROTATE_COUNT=0",
+                    "LOG_ROTATE_COUNT=10001", "LOG_LEVEL=verbose", "GEMFIRE_LOG_LEVEL=invalid"):
+        custom.write_text(f"ENV=invalid\n{invalid}\n")
+        trace_before = (root / "trace").read_text()
+        run("--config", str(custom), success=False)
+        assert (root / "trace").read_text() == trace_before, invalid
+        assert config.read_text() == installed_config
+        assert logging.read_text() == configured_logging
+        assert rotation.read_text() == configured_rotation
+    custom.write_text("ENV=explicit-replacement\nLOG_LEVEL=\nGEMFIRE_LOG_LEVEL=\n")
+    run("--config", str(custom))
+    assert rotation.read_text() == default_rotation
+    assert "Environment=COLLECTOR_LOG_LEVEL=INFO\n" in logging.read_text()
+    assert custom_log.read_text() == "retain custom log\n"
+    assert log.read_text() == "previous collection log\n"
+
     # The repository checkout layout is supported as well as the unpacked distribution layout.
     (source / "build/libs").mkdir(parents=True)
     shutil.move(source / "lib/02-standalone-jmx.jar", source / "build/libs/02-standalone-jmx.jar")
@@ -280,12 +327,19 @@ exit "${TEST_COLLECTOR_EXIT:-0}"''')
         assert "upload result or error from collector stderr" in captured.stdout
     assert (root / "collector-calls").read_text().splitlines() == [f"collect --config {config}"] * 4
     assert log.read_text().startswith("previous collection log\n")
+    # The installer-selected file takes precedence over the systemd directory fallback.
+    custom_capture = subprocess.run(["bash", str(wrapper), "collect"],
+                                    env=dict(environment, COLLECTOR_LOG_FILE=str(custom_log),
+                                             LOGS_DIRECTORY=str(root / "missing-logs")),
+                                    text=True, capture_output=True)
+    assert custom_capture.returncode == 0, custom_capture.stderr
+    assert custom_capture.stdout in custom_log.read_text()
     # A log setup failure must fail the service without starting an unlogged collection.
     broken_log = subprocess.run(["bash", str(wrapper), "collect", "--config", str(config)],
                                env=dict(environment, LOGS_DIRECTORY=str(root / "missing-logs")),
                                text=True, capture_output=True)
     assert broken_log.returncode != 0
-    assert len((root / "collector-calls").read_text().splitlines()) == 4
+    assert len((root / "collector-calls").read_text().splitlines()) == 5
     saved_logs = log.read_text()
     run("--interval-seconds", "30")
     assert log.read_text() == saved_logs, "Reinstallation must retain existing logs"

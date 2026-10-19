@@ -54,3 +54,15 @@ UPLOAD_REQUIRED=false
 # gemfire.ssl-truststore=/path/to/truststore.p12
 # gemfire.ssl-truststore-type=PKCS12
 # gemfire.ssl-truststore-password=
+
+# Optional installed-service logging, applied by installation/install.sh.
+# Rerun the installer after changes. These settings do not configure the direct CLI.
+# LOG_DIR must be beneath /var/log; LOG_FILE_NAME is a filename, without a directory.
+# LOG_DIR=/var/log/gemfire-nightly-stats
+# LOG_FILE_NAME=collector.log
+# LOG_ROTATE_INTERVAL=daily
+# LOG_ROTATE_SIZE=10M
+# LOG_ROTATE_COUNT=14
+# Levels: ALL, TRACE, DEBUG, INFO, WARN, ERROR, FATAL, OFF (case insensitive).
+# LOG_LEVEL=INFO
+# GEMFIRE_LOG_LEVEL=WARN

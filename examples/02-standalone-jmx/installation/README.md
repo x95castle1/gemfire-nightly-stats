@@ -142,8 +142,9 @@ that sort after it can still override it.
 | `/etc/gemfire-nightly-stats/collector.env` | Selected Java/GemFire runtime paths and JVM options only |
 | `/var/lib/gemfire-nightly-stats/reports/<ENV>/<CLUSTER_NAME>/` | Individual reports and upload receipts |
 | `/var/log/gemfire-nightly-stats/collector.log` | Appended collection output, errors, upload results and UTC start/finish timestamps |
-| `/etc/logrotate.d/gemfire-nightly-stats` | Daily log rotation with up to 14 archives |
+| `/etc/logrotate.d/gemfire-nightly-stats` | Generated log rotation settings from properties |
 | `/etc/systemd/system/gemfire-nightly-stats.service` | One-shot service running as `gemfire-stats` |
+| `/etc/systemd/system/gemfire-nightly-stats.service.d/zz-collector-logging.conf` | Generated log path and Java levels from properties |
 | `/etc/systemd/system/gemfire-nightly-stats.timer` | Boot-enabled collection schedule |
 | `/etc/systemd/system/gemfire-nightly-stats.timer.d/zz-collector-schedule.conf` | Generated schedule from properties or the interval option |
 
@@ -161,7 +162,7 @@ An existing `COLLECTION_CALENDAR` is read from the installed properties and reap
 ## Collector log file
 
 The installed service appends stdout and stderr to
-`/var/log/gemfire-nightly-stats/collector.log` and also sends that output to journald.
+`/var/log/gemfire-nightly-stats/collector.log` by default and also sends that output to journald.
 Each run includes a UTC start timestamp and a UTC completion timestamp with its exit status.
 The collector's existing output includes report filenames, upload results, pending uploads and
 errors. The logging launcher preserves collection/configuration/upload failure exit codes so
@@ -183,6 +184,50 @@ not continuously. Older archives are compressed; the newest archive stays uncomp
 one rotation cycle so an in-progress one-shot collection can finish writing to it. New runs
 open the current `collector.log`. The existing 20-minute service timeout is shorter than the
 normal daily rotation interval.
+
+### Override logging in collector.properties
+
+Add any of these settings to the same `collector.properties` used for JMX and S3:
+
+```properties
+LOG_DIR=/var/log/gemfire-nightly-stats
+LOG_FILE_NAME=collector.log
+LOG_ROTATE_INTERVAL=daily
+LOG_ROTATE_SIZE=10M
+LOG_ROTATE_COUNT=14
+LOG_LEVEL=INFO
+GEMFIRE_LOG_LEVEL=WARN
+```
+
+| Property | Default | Allowed values and meaning |
+|---|---|---|
+| `LOG_DIR` | `/var/log/gemfire-nightly-stats` | Absolute directory beneath `/var/log`; no spaces or shell escapes |
+| `LOG_FILE_NAME` | `collector.log` | Filename starting with a letter or digit; remaining characters may also include `.`, `_`, `-` |
+| `LOG_ROTATE_INTERVAL` | `daily` | `daily`, `weekly`, `monthly` |
+| `LOG_ROTATE_SIZE` | `10M` | Positive bytes or a size with suffix `k`, `M`, `G`; checked when logrotate runs |
+| `LOG_ROTATE_COUNT` | `14` | Number of archives to retain, from 1 to 10000 |
+| `LOG_LEVEL` | `INFO` | Root Java Log4j level |
+| `GEMFIRE_LOG_LEVEL` | `WARN` | Java Log4j level for `org.apache.geode` |
+
+Both level settings accept `ALL`, `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`,
+`OFF`, in either case. Levels filter Java logger messages; collection summaries, errors
+written directly to stderr, and the launcher's start/finish messages are still written.
+Blank or omitted settings use the defaults. Rotation interval changes do not change
+Ubuntu's logrotate check frequency.
+
+Rerun the installer to apply these settings. For example, from this example's directory:
+
+```sh
+sudo installation/install.sh --gemfire-home /opt/gemfire \
+  --config /opt/gemfire-nightly-stats/examples/02-standalone-jmx/installation/collector.properties
+```
+
+The installer validates settings before stopping the service or replacing configuration.
+It generates the service logging drop-in and logrotate rule; keep your edits in properties.
+It reapplies installed properties when `--config` is omitted. Changed log paths preserve the
+old files; they are not moved or deleted. The direct CLI keeps its console logging behavior.
+When upgrading from an earlier version, rebuild the JAR with `make dist` before reinstalling
+so it includes support for the level settings.
 
 The installer installs no packages and does not change the system-wide logrotate schedule.
 If that timer is disabled, enable Ubuntu's existing rotation job:
@@ -222,7 +267,8 @@ timer activation alone does not establish collection success. If the collector t
 from `list-timers`, check `systemctl status gemfire-nightly-stats.timer` and start it with the
 resume command above. Starting only the `.service` performs one collection and does not enable
 automatic scheduling.
-Changes to ordinary properties/environment settings take effect on the next collection.
+Changes to JMX, report, S3 and runtime environment settings take effect on the next collection.
+Schedule and logging properties require rerunning the installer.
 For a new interval, clear `COLLECTION_CALENDAR` and rerun the installer with `--interval-seconds`.
 For daily or nightly collection, set `COLLECTION_CALENDAR` and rerun the installer as shown above.
 
@@ -310,6 +356,8 @@ docker compose stop collector-install-test
 Reports persist in the `collector-install-test-data` named volume and logs in the
 `collector-install-test-logs` volume. `make clean` removes both volumes as well as the SeaweedFS
 volume. `make stop` also stops the test container and keeps its reports and logs.
+The log volume covers the default `/var/log/gemfire-nightly-stats` directory; a custom
+`LOG_DIR` outside it needs a matching volume mount to persist across container recreation.
 A mounted template with its placeholder JMX host is
 sufficient to inspect installation, but successful collection requires a configured properties
 file and a reachable cluster. For another cluster, set `INSTALL_TEST_CONFIG` to your properties

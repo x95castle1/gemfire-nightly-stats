@@ -15,6 +15,8 @@ done
 systemd-analyze verify /etc/systemd/system/gemfire-nightly-stats.service /etc/systemd/system/gemfire-nightly-stats.timer
 [[ -r /run/collector-install-test.started ]] || { echo 'The boot-time installer has not completed.' >&2; exit 1; }
 reports=/var/lib/gemfire-nightly-stats/reports
+log=$(sed -n 's/^Environment=COLLECTOR_LOG_FILE=//p' /etc/systemd/system/gemfire-nightly-stats.service.d/zz-collector-logging.conf)
+[[ -n "$log" ]] || { echo 'The installed service has no configured log file.' >&2; exit 1; }
 delivery_mode=$(awk -F= '/^[[:space:]]*DELIVERY_MODE[[:space:]]*=/ {
   value=substr($0,index($0,"=")+1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
   gsub(/^"|"$/, "", value); mode=value
@@ -31,14 +33,13 @@ while ((SECONDS < deadline)); do
       fi
     done
     if [[ "$complete" = true ]]; then
-      log=/var/log/gemfire-nightly-stats/collector.log
       for file in "${files[@]}"; do
         grep -Fq "$(basename "$file")" "$log" || complete=false
       done
     fi
     if [[ "$complete" = true ]]; then
       printf 'Verified %s distinct reports produced by the systemd timer since container startup.\n' "${#files[@]}"
-      echo 'Collection output is present in /var/log/gemfire-nightly-stats/collector.log.'
+      printf 'Collection output is present in %s.\n' "$log"
       printf '%s\n' "${files[@]}"
       exit 0
     fi

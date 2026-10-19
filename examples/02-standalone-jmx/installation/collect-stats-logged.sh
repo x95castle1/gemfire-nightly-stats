@@ -3,7 +3,7 @@
 set -euo pipefail
 umask 027
 BIN_DIR=$(cd "$(dirname "$0")" && pwd)
-LOG_FILE="${LOGS_DIRECTORY:-/var/log/gemfire-nightly-stats}/collector.log"
+LOG_FILE="${COLLECTOR_LOG_FILE:-${LOGS_DIRECTORY:-/var/log/gemfire-nightly-stats}/collector.log}"
 
 message() {
   printf '%s %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$1" | tee -a "$LOG_FILE"

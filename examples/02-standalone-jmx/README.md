@@ -103,6 +103,8 @@ The installed service writes `/var/log/gemfire-nightly-stats/collector.log` and 
 UTC start/finish timestamps and the collector exit status. The installer configures logrotate
 for daily rotation and up to 14 archives; it checks for existing `logrotate` without installing
 packages. Use `sudo tail -F /var/log/gemfire-nightly-stats/collector.log` to follow the file.
+Override the path, rotation and Java levels in `collector.properties`, then rerun the installer.
+See [logging properties](installation/README.md#override-logging-in-collectorproperties) for the options.
 The [Docker Compose installation test](installation/README.md#test-the-installation-with-docker-compose)
 boots Ubuntu with systemd, runs the real installer automatically, and verifies scheduled reports
 and optional S3 uploads using the `installation-test` profile.

@@ -6,7 +6,7 @@
     </Console>
   </Appenders>
   <Loggers>
-    <Logger name="org.apache.geode" level="WARN"/>
-    <Root level="INFO"><AppenderRef ref="Stderr"/></Root>
+    <Logger name="org.apache.geode" level="${env:COLLECTOR_GEMFIRE_LOG_LEVEL:-WARN}"/>
+    <Root level="${env:COLLECTOR_LOG_LEVEL:-INFO}"><AppenderRef ref="Stderr"/></Root>
   </Loggers>
 </Configuration>
