@@ -77,6 +77,9 @@ Schedule `collect` with cron, a systemd timer, or a Kubernetes CronJob. For exam
 ```
 
 The scheduler determines when the job runs and which timezone its schedule uses. `REPORT_TIMEZONE` controls filenames only. Both collectors use unique filenames, so publishing to the same cluster prefix retains each individual collection.
+With the Ubuntu installer, set `COLLECTION_CALENDAR=*-*-* 22:00:00 America/Chicago` in
+`collector.properties` for daily collection at 10 PM US Central, then rerun the installer to
+apply it. This replaces interval scheduling. See [calendar scheduling](installation/README.md#set-a-calendar-schedule-in-properties).
 
 The commands write JSON results to stdout and diagnostics to stderr. Exit statuses are:
 

@@ -61,6 +61,9 @@ with tempfile.TemporaryDirectory(prefix="collector-install-check-") as temporary
     executable(tools / "useradd", 'touch "$FIXTURE/account-passwd"')
     executable(tools / "chown", ":")
     executable(tools / "runuser", 'shift 3\nexec "$@"')
+    executable(tools / "systemd-analyze", '''[[ "$1" = calendar && "$2" = -- ]]
+printf '%s\n' "$3" >> "$FIXTURE/calendar-validations"
+[[ "$3" = '*-*-* 22:00:00 America/Chicago' || "$3" = '*-*-* 22:00:00 UTC' ]]''')
     real_install = shutil.which("install")
     executable(tools / "install", '''args=()
 while (($#)); do
@@ -181,6 +184,55 @@ esac''')
     assert (root / "active").exists(), "An active timer must resume after updating"
     assert "package-manager-called" not in (root / "trace").read_text()
 
+    # Invalid calendar values fail before stopping services or replacing installed files.
+    schedule = units / "gemfire-nightly-stats.timer.d/zz-collector-schedule.conf"
+    old_schedule = schedule.read_text()
+    old_config = config.read_text()
+    trace_before = (root / "trace").read_text()
+    custom.write_text("ENV=calendar-test\nCOLLECTION_CALENDAR=not a schedule\n")
+    invalid_calendar = run("--config", str(custom), success=False)
+    assert "Invalid COLLECTION_CALENDAR" in invalid_calendar.stderr
+    assert (root / "trace").read_text() == trace_before
+    assert schedule.read_text() == old_schedule
+    assert config.read_text() == old_config
+
+    # The last property wins; comments and quotes are handled without interpreting shell syntax.
+    custom.write_text('ENV=calendar-test\n# COLLECTION_CALENDAR=ignored\n'
+                      'COLLECTION_CALENDAR=invalid earlier entry\n'
+                      '  COLLECTION_CALENDAR = "*-*-* 22:00:00 America/Chicago"  \n')
+    calendar_install = run("--config", str(custom), "--interval-seconds", "30")
+    assert "calendar schedule: *-*-* 22:00:00 America/Chicago" in calendar_install.stdout
+    assert "takes precedence over --interval-seconds" in calendar_install.stdout
+    assert "First collection in about 10 seconds" not in calendar_install.stdout
+    calendar_lines = schedule.read_text().splitlines()
+    assert "OnCalendar=*-*-* 22:00:00 America/Chicago" in calendar_lines
+    assert "OnActiveSec=" in calendar_lines and "OnUnitInactiveSec=" in calendar_lines
+    assert "OnActiveSec=10s" not in calendar_lines and "OnUnitInactiveSec=30s" not in calendar_lines
+    assert stat.S_IMODE(schedule.stat().st_mode) == 0o644
+    assert (root / "calendar-validations").read_text().splitlines()[-1] == "*-*-* 22:00:00 America/Chicago"
+
+    # Reinstallation reads the existing installed properties when --config is omitted.
+    retained = run()
+    assert "calendar schedule: *-*-* 22:00:00 America/Chicago" in retained.stdout
+    assert config.read_text() == custom.read_text()
+    # The managed schedule is later than the earlier manual override and resets its triggers.
+    manual_override = schedule.parent / "override.conf"
+    manual_override.write_text("[Timer]\nOnCalendar=*-*-* 01:00:00\n")
+    assert sorted(schedule.parent.glob("*.conf"))[-1] == schedule
+    custom.write_text("ENV=calendar-test\nCOLLECTION_CALENDAR: *-*-* 22:00:00 UTC\n")
+    run("--config", str(custom), "--no-start")
+    assert "OnCalendar=*-*-* 22:00:00 UTC" in schedule.read_text()
+    assert manual_override.read_text() == "[Timer]\nOnCalendar=*-*-* 01:00:00\n"
+    assert not (root / "active").exists()
+
+    # Clearing the calendar restores interval collection, including its startup trigger.
+    custom.write_text('ENV=explicit-replacement\nCOLLECTION_CALENDAR=""\n')
+    run("--config", str(custom), "--interval-seconds", "30")
+    interval_lines = schedule.read_text().splitlines()
+    assert "OnCalendar=" in interval_lines
+    assert not any(line.startswith("OnCalendar=") and line != "OnCalendar=" for line in interval_lines)
+    assert "OnActiveSec=10s" in interval_lines and "OnUnitInactiveSec=30s" in interval_lines
+
     # The repository checkout layout is supported as well as the unpacked distribution layout.
     (source / "build/libs").mkdir(parents=True)
     shutil.move(source / "lib/02-standalone-jmx.jar", source / "build/libs/02-standalone-jmx.jar")
@@ -213,4 +265,4 @@ esac''')
                                   text=True, capture_output=True)
     assert repeated_stop.returncode == 0, repeated_stop.stdout + repeated_stop.stderr
 
-print("Installer checks passed: preflight, permissions, updates, automatic/staged startup, startup failure and repeatable shutdown.")
+print("Installer checks passed: preflight, permissions, updates, timer startup, calendar validation/transitions and repeatable shutdown.")

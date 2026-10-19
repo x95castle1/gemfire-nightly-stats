@@ -10,6 +10,10 @@ JMX_PORT=1099
 # Total budget for the JMX connection, collection and closing the connection.
 JMX_TIMEOUT_SECONDS=120
 
+# Optional systemd schedule, read by installation/install.sh only; rerun it to apply changes.
+# COLLECTION_CALENDAR=*-*-* 22:00:00 America/Chicago
+# If set, this calendar replaces the installer's --interval-seconds schedule.
+
 # Optional authentication. Credentials are read only from this properties file.
 # JMX_USERNAME=reader
 # JMX_PASSWORD=

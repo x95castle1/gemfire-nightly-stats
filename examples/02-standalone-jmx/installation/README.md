@@ -87,6 +87,47 @@ timer activation. Scheduling is controlled by the timer, not `COLLECTION_INTERVA
 in a properties file. The default 60-second interval, or any positive integer number of
 seconds, can be selected with `--interval-seconds`.
 
+## Set a calendar schedule in properties
+
+For daily collection at 10 PM US Central, add this single line to your collector properties:
+
+```properties
+COLLECTION_CALENDAR=*-*-* 22:00:00 America/Chicago
+```
+
+Use `UTC` instead of `America/Chicago` for 10 PM UTC, or omit the timezone to use the VM's
+timezone. Named timezones follow daylight-saving changes. Calendar expressions use
+[systemd's calendar syntax](https://www.freedesktop.org/software/systemd/man/latest/systemd.time.html#Calendar%20Events).
+
+For an already-installed collector, edit `/etc/gemfire-nightly-stats/collector.properties`
+and rerun the installer from the checkout or distribution:
+
+```sh
+sudo ./installation/install.sh \
+  --gemfire-home "$GEMFIRE_HOME" \
+  --config /etc/gemfire-nightly-stats/collector.properties
+
+systemctl list-timers --all gemfire-nightly-stats.timer
+```
+
+The installer validates the calendar before stopping the running collector or changing any
+installed files. `COLLECTION_CALENDAR` takes precedence over `--interval-seconds`. Calendar
+mode disables both the 10-second startup collection and the repeating interval: the first
+collection waits for the next calendar occurrence. There is no automatic catch-up setting
+enabled by the installer. The Java process remains one-shot.
+
+Schedule changes require rerunning the installer; editing properties alone does not change
+systemd's timer. Normal JMX, S3 and report-setting edits still take effect on the next collection.
+To restore interval scheduling, remove or blank `COLLECTION_CALENDAR` and rerun the installer
+with `--interval-seconds 60` (or your chosen interval).
+
+The installer writes a generated `gemfire-nightly-stats.timer.d/zz-collector-schedule.conf`
+file under `/etc/systemd/system`. It resets existing timing directives and sorts after the
+ordinary `override.conf` created by `systemctl edit`, so the earlier manual calendar override
+does not take precedence over the properties setting. Keep scheduling in the properties file
+and installer options; this generated file is replaced on each installation. Custom overrides
+that sort after it can still override it.
+
 ## Installed files
 
 | Location | Contents |
@@ -99,6 +140,7 @@ seconds, can be selected with `--interval-seconds`.
 | `/var/lib/gemfire-nightly-stats/reports/<ENV>/<CLUSTER_NAME>/` | Individual reports and upload receipts |
 | `/etc/systemd/system/gemfire-nightly-stats.service` | One-shot service running as `gemfire-stats` |
 | `/etc/systemd/system/gemfire-nightly-stats.timer` | Boot-enabled collection schedule |
+| `/etc/systemd/system/gemfire-nightly-stats.timer.d/zz-collector-schedule.conf` | Generated schedule from properties or the interval option |
 
 The installer creates the `gemfire-stats` system account with no login shell. It preserves
 reports and existing properties unless you explicitly pass `--config`. Reinstallation updates
@@ -107,8 +149,9 @@ in your properties file. If upgrading an earlier installation with credentials i
 move them to `collector.properties` and remove the environment entries before reinstalling.
 It stops the old timer/service during replacement and resumes a timer that was already running,
 unless `--no-start` is supplied.
-Pass `--interval-seconds` again when reinstalling
-to retain a nondefault interval.
+Pass `--interval-seconds` again when reinstalling to retain a nondefault interval.
+An existing `COLLECTION_CALENDAR` is read from the installed properties and reapplied when
+`--config` is omitted.
 
 ## Operate the collector
 
@@ -141,11 +184,9 @@ timer activation alone does not establish collection success. If the collector t
 from `list-timers`, check `systemctl status gemfire-nightly-stats.timer` and start it with the
 resume command above. Starting only the `.service` performs one collection and does not enable
 automatic scheduling.
-Changes to the properties/environment files take effect on the next collection. For a new
-interval, rerun the installer with `--interval-seconds`, or edit the timer and run
-`sudo systemctl daemon-reload` followed by `sudo systemctl restart gemfire-nightly-stats.timer`.
-To return to nightly collection instead, replace both monotonic timer directives with an
-appropriate `OnCalendar` schedule; see the [systemd timer documentation](https://www.freedesktop.org/software/systemd/man/systemd.timer.html).
+Changes to ordinary properties/environment settings take effect on the next collection.
+For a new interval, clear `COLLECTION_CALENDAR` and rerun the installer with `--interval-seconds`.
+For daily or nightly collection, set `COLLECTION_CALENDAR` and rerun the installer as shown above.
 
 ## Test the installation with Docker Compose
 
@@ -211,6 +252,8 @@ For a different interval, set `INSTALL_TEST_INTERVAL_SECONDS=60` before starting
 For longer intervals, increase the verifier's timeout, for example
 `docker compose exec -e VERIFY_TIMEOUT_SECONDS=300 collector-install-test /usr/local/bin/verify-installation.sh`.
 Use `S3=false` with `make start` to test local collection instead.
+For short-interval Docker tests, leave `COLLECTION_CALENDAR` unset in the supplied properties;
+an explicit calendar also takes precedence over the Docker/Make interval selection.
 
 ```sh
 # Inspect the installed files and units, or follow collection logs.
