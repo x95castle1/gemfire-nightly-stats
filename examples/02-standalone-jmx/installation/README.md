@@ -248,6 +248,10 @@ sudo /opt/gemfire-nightly-stats/bin/check.sh
 sudo /opt/gemfire-nightly-stats/bin/check.sh --test-upload
 ```
 
+From the example 02 checkout on the VM, use `make check`, or `make check TEST_UPLOAD=true`
+to include the diagnostic object upload. These commands invoke the helper with `sudo` and
+use the installed configuration; they do not start the demo environment.
+
 The helper uses a separate transient systemd unit with the same service account, runtime
 EnvironmentFile, working directory, umask and private temporary directory as collection.
 It requires `sudo` and `systemd-run`, uses the installed properties, and returns the diagnostic

@@ -15,6 +15,7 @@ case "$ACTION" in
   start   Start the locator, two servers, sample regions and SeaweedFS
   stop    Stop the environment, keeping reports and SeaweedFS data
   status  Show the environment, cluster members and Ubuntu collector timer/result
+  check   Diagnose the installed Ubuntu collector (TEST_UPLOAD=true also tests S3 writes)
   logs    Follow the Ubuntu collector journal when running, otherwise the locator log
   admin   Open the SeaweedFS Admin UI in your browser
   test    Run an isolated integration test
@@ -28,10 +29,21 @@ COLLECTION_INTERVAL_SECONDS=60 repeats every minute; 0 keeps the normal schedule
 run asks for local Java or Ubuntu systemd. RUN_MODE=local or ubuntu skips that picker.
 The Ubuntu timer requires a positive interval. status includes its timer and last service result.
 SeaweedFS always starts. Configuration is saved under .test-cluster/.
+check runs on the Ubuntu VM with installed properties and runtime settings; it uses sudo.
 HELP
     exit 0 ;;
   build) exec ./gradlew build --quiet ;;
   dist) exec ./gradlew assembleDist --quiet ;;
+  check)
+    set --
+    case "${TEST_UPLOAD:-false}" in
+      true) set -- --test-upload ;;
+      false) ;;
+      *) echo 'TEST_UPLOAD must be true or false.' >&2; exit 2 ;;
+    esac
+    [[ $(uname -s) = Linux ]] || { echo 'Run make check on the Ubuntu collector VM.' >&2; exit 2; }
+    if [[ $(id -u) = 0 ]]; then exec "$PROJECT_DIR/installation/check.sh" "$@"; fi
+    exec sudo "$PROJECT_DIR/installation/check.sh" "$@" ;;
 esac
 
 # Keep this example independently usable without the repository dispatcher.

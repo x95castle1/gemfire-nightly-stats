@@ -81,10 +81,21 @@ sudo /opt/gemfire-nightly-stats/bin/check.sh
 sudo /opt/gemfire-nightly-stats/bin/check.sh --test-upload
 ```
 
+From this example's checkout on the Ubuntu VM, the Make equivalents are:
+
+```sh
+make check
+make check TEST_UPLOAD=true
+```
+
+These use `sudo` to run diagnostics with the installed configuration and runtime settings.
+They do not start the demo cluster or SeaweedFS. The upload option leaves a diagnostic object
+in your configured bucket.
+
 The VM helper runs a separate transient unit as `gemfire-stats`, using the installed
 `collector.env`, `collector.properties` and service working directory. It leaves the collector
 timer, collection service result and collection log file untouched. Reinstall this version
-to install the helper; it does not require additional properties or Make targets.
+to install the helper; it does not require additional properties.
 
 `check` writes a JSON summary to stdout and progress/results to stderr. Each check reports
 `PASS`, `FAIL`, `WARN` or `SKIPPED`. It validates collector settings; creates, reads and removes
