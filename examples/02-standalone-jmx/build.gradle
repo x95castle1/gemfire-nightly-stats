@@ -46,10 +46,36 @@ jar {
     archiveFileName = "${project.name}.jar"
 }
 
+// Bind an installable JAR to its exact source/build inputs, without requiring JDK tools on the VM.
+def installInputs = files(fileTree('src/main'), fileTree(projectDir) {
+    include 'build.gradle', 'settings.gradle', 'gradle.properties'
+})
+def installChecksums = tasks.register('writeInstallChecksums') {
+    dependsOn tasks.named('jar')
+    def applicationJar = tasks.named('jar').flatMap { it.archiveFile }
+    def jarChecksum = layout.buildDirectory.file("libs/${project.name}.jar.sha256")
+    def sourceChecksums = layout.buildDirectory.file("libs/${project.name}.sources.sha256")
+    inputs.file(applicationJar)
+    inputs.files(installInputs).withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.files(jarChecksum, sourceChecksums)
+    doLast {
+        def checksum = { File file ->
+            java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance('SHA-256').digest(file.bytes))
+        }
+        File artifact = applicationJar.get().asFile
+        jarChecksum.get().asFile.text = "${checksum(artifact)}  ${artifact.name}\n"
+        sourceChecksums.get().asFile.text = installInputs.files.sort { relativePath(it) }.collect {
+            "${checksum(it)}  ${relativePath(it)}\n"
+        }.join('')
+    }
+}
+tasks.named('assemble') { dependsOn installChecksums }
+
 distributions {
     main {
         contents {
             from(tasks.named('jar')) { into 'lib' }
+            from(installChecksums) { into 'lib' }
             from('scripts/collect-stats.sh') {
                 into 'bin'
                 filePermissions { unix('rwxr-xr-x') }

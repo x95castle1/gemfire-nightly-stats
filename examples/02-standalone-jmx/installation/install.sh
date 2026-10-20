@@ -42,6 +42,8 @@ Set COLLECTION_CALENDAR in collector.properties for a systemd calendar schedule,
 COLLECTION_CALENDAR=*-*-* 22:00:00 America/Chicago. Rerun this installer to apply schedule changes.
 Logging properties: LOG_DIR, LOG_FILE_NAME, LOG_ROTATE_INTERVAL, LOG_ROTATE_SIZE,
 LOG_ROTATE_COUNT, LOG_LEVEL and GEMFIRE_LOG_LEVEL. Rerun this installer to apply logging changes.
+Build with make dist before installation. Missing, changed or outdated build artifacts are
+rejected before the running service, installed application or configuration is changed.
 HELP
 }
 
@@ -70,21 +72,44 @@ if [[ -n "$config_source" && "$leave_stopped" != true ]]; then start_now=true; f
 [[ $(id -u) = 0 ]] || die 'Run this installer with sudo.'
 [[ -f /etc/os-release ]] && grep -Eq '^ID="?ubuntu"?$' /etc/os-release || die 'This installer requires Ubuntu.'
 command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] || die 'The VM must be booted with systemd.'
-for prerequisite in readlink awk install getent groupadd useradd runuser chown chmod mktemp sed tee date touch logrotate tr; do
+for prerequisite in readlink awk install getent groupadd useradd runuser chown chmod mktemp sed tee date touch logrotate tr sha256sum find sort xargs; do
   command -v "$prerequisite" >/dev/null || die "Required command is missing: $prerequisite"
 done
 [[ -n "$gemfire_home" ]] || die 'Set --gemfire-home (or GEMFIRE_HOME) to an existing GemFire installation.'
 [[ -r "$gemfire_home/lib/gemfire-dependencies.jar" ]] || die 'GemFire client libraries are missing: lib/gemfire-dependencies.jar.'
 gemfire_home=$(readlink -f "$gemfire_home")
 
-if [[ -f "$SOURCE_DIR/lib/02-standalone-jmx.jar" ]]; then
-  source_jar="$SOURCE_DIR/lib/02-standalone-jmx.jar"
-  source_launcher="$SOURCE_DIR/bin/collect-stats.sh"
-else
+checkout=false
+if [[ -d "$SOURCE_DIR/src/main" || -f "$SOURCE_DIR/build.gradle" ]]; then
+  checkout=true
   source_jar="$SOURCE_DIR/build/libs/02-standalone-jmx.jar"
   source_launcher="$SOURCE_DIR/scripts/collect-stats.sh"
+else
+  source_jar="$SOURCE_DIR/lib/02-standalone-jmx.jar"
+  source_launcher="$SOURCE_DIR/bin/collect-stats.sh"
 fi
-[[ -r "$source_jar" && -r "$source_launcher" ]] || die 'Build example 02 with ./gradlew assembleDist, then use the checkout or unpacked distribution.'
+rebuild="Run make dist (or ./gradlew assembleDist) as your normal user from example 02, then rerun this installer. For an unpacked distribution, rebuild and unpack a new archive."
+[[ -r "$source_jar" && -r "$source_launcher" ]] || die "Collector JAR or launcher is missing. $rebuild"
+artifact_dir=$(dirname "$source_jar")
+[[ -r "$source_jar.sha256" && -r "$artifact_dir/02-standalone-jmx.sources.sha256" ]] \
+  || die "Build checksum files are missing; the collector needs rebuilding. $rebuild"
+(
+  cd "$artifact_dir"
+  sha256sum --check --status 02-standalone-jmx.jar.sha256
+) || die "Collector JAR does not match its build checksum (changed, corrupt or mismatched build). $rebuild"
+if [[ "$checkout" = true ]]; then
+  # Compare content and file membership; timestamps alone cannot establish build freshness.
+  current_inputs=$(
+    cd "$SOURCE_DIR"
+    {
+      find src/main -type f -print0
+      printf '%s\0' build.gradle settings.gradle
+      if [[ -f gradle.properties ]]; then printf '%s\0' gradle.properties; fi
+    } | LC_ALL=C sort -z | xargs -0 sha256sum
+  ) || die "Cannot inspect collector source/build inputs. $rebuild"
+  [[ "$current_inputs" = "$(cat "$artifact_dir/02-standalone-jmx.sources.sha256")" ]] \
+    || die "Collector JAR is outdated: source or build inputs changed since it was built. $rebuild"
+fi
 [[ -z "$config_source" || -r "$config_source" ]] || die "Cannot read properties file: $config_source"
 
 # Scheduling is applied by this installer; the collector JVM remains a one-shot command.
@@ -150,12 +175,20 @@ for runtime_path in "$gemfire_home" "$java_home"; do
   [[ "$runtime_path" =~ ^/[A-Za-z0-9_./+-]+$ ]] || die 'Install Java and GemFire at absolute paths without spaces or shell metacharacters.'
 done
 
+# Help loads the real application without properties, remote connections or report writes.
+# Also catch a mismatched older JAR that predates the diagnostics command.
+collector_help=$("$java_binary" -cp "$source_jar:$gemfire_home/lib/gemfire-dependencies.jar" \
+  com.example.gemfire.stats.standalone.NightlyStatsMain --help 2>/dev/null) \
+  || die "Built collector cannot run with the selected Java/GemFire libraries. Check runtime compatibility. $rebuild"
+[[ "$collector_help" = *'|check|'* && "$collector_help" = *'--test-upload'* ]] \
+  || die "Built collector does not support connection diagnostics; it is an older JAR. $rebuild"
+
 # Do not keep two credential sources when updating an earlier installation.
 if [[ -f "$CONFIG_DIR/collector.env" ]] && grep -Eq '^[[:space:]]*(JMX_USERNAME|JMX_PASSWORD|JMX_TOKEN|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|S3_ACCESS_KEY|S3_SECRET_KEY)[[:space:]]*=' "$CONFIG_DIR/collector.env"; then
   die "Move collector credentials to $CONFIG_DIR/collector.properties and remove them from collector.env before reinstalling (use S3_ACCESS_KEY/S3_SECRET_KEY for S3)."
 fi
 
-echo "Preflight passed: Ubuntu/systemd, Java $version, GemFire libraries and collector artifacts."
+echo "Preflight passed: Ubuntu/systemd, Java $version, GemFire libraries, build checksums and collector diagnostics support."
 getent group "$ACCOUNT" >/dev/null || groupadd --system "$ACCOUNT"
 getent passwd "$ACCOUNT" >/dev/null || useradd --system --gid "$ACCOUNT" --home-dir "$STATE_DIR" --no-create-home --shell /usr/sbin/nologin "$ACCOUNT"
 runuser -u "$ACCOUNT" -- test -r "$gemfire_home/lib/gemfire-dependencies.jar" || die 'The gemfire-stats account cannot read the GemFire client libraries. Check parent directory permissions.'

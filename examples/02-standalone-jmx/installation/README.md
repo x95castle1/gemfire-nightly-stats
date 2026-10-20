@@ -23,6 +23,22 @@ cd examples/02-standalone-jmx
 ./gradlew assembleDist
 ```
 
+For updates from a source checkout, run `make dist` as your normal user before rerunning
+`installation/install.sh`. The installer does not build as root. It rejects a missing JAR,
+missing build checksum files, a JAR that does not match its checksum, or checkout source/build
+inputs that differ from the recorded build. Content changes and added/removed source files
+are checked even when file timestamps are unchanged. A checkout always uses `build/libs/`,
+even if an older unpacked distribution left a `lib/` directory beside it.
+
+The build writes `02-standalone-jmx.jar.sha256` and `02-standalone-jmx.sources.sha256` beside
+the JAR and includes both under `lib/` in distributions. Keep these files with the JAR when
+copying a distribution. Using the selected Java/GemFire runtime, the installer also runs
+`--help` to verify that the application loads and supports connection diagnostics. These checks
+complete before accounts/directories are created, the running timer/service is stopped, or
+installed files are replaced. The help probe makes no JMX/S3 requests and reads no credentials.
+For a distribution without source files, the installer verifies the JAR checksum and CLI
+compatibility; source freshness is checked when installing from a checkout.
+
 Copy the resulting archive from `build/distributions/` to the VM and unpack it. Run the
 following commands from its top-level directory, which contains `bin/`, `lib/` and
 `installation/`. A built checkout works too. Copying only `installation/` is insufficient:

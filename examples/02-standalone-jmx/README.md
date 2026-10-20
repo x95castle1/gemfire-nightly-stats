@@ -95,7 +95,9 @@ in your configured bucket.
 The VM helper runs a separate transient unit as `gemfire-stats`, using the installed
 `collector.env`, `collector.properties` and service working directory. It leaves the collector
 timer, collection service result and collection log file untouched. Reinstall this version
-to install the helper; it does not require additional properties.
+to install the helper; it does not require additional properties. Run `make dist` before
+reinstalling. The installer verifies build checksums, checkout source freshness and CLI support
+before changing the installation, and rejects outdated artifacts with rebuild instructions.
 
 `check` writes a JSON summary to stdout and progress/results to stderr. Each check reports
 `PASS`, `FAIL`, `WARN` or `SKIPPED`. It validates collector settings; creates, reads and removes
@@ -176,7 +178,8 @@ service result, `make logs` follows its journal, and `make stop` stops it.
 
 `./gradlew assembleDist` builds ZIP and TAR distributions in
 `build/distributions/`. Each includes `lib/02-standalone-jmx.jar`,
-`bin/collect-stats.sh`, example settings, report reference, sample output and this README.
+`bin/collect-stats.sh`, JAR/source checksum files under `lib/`, example settings, report reference,
+sample output and this README.
 On the target host, unpack the archive and use `bin/collect-stats.sh` in place of the checkout
 launcher shown above. Supply Java and `GEMFIRE_HOME`; the embedded example is not required.
 

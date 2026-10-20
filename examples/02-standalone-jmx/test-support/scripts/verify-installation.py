@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the Ubuntu installer in a disposable filesystem with mocked host commands."""
 import configparser
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -63,7 +64,13 @@ with tempfile.TemporaryDirectory(prefix="collector-install-check-") as temporary
     dependencies.touch()
     java_home = root / "java"
     (java_home / "bin").mkdir(parents=True)
-    executable(java_home / "bin/java", 'echo "    java.specification.version = ${TEST_JAVA_VERSION:-17}" >&2')
+    executable(java_home / "bin/java", '''if [[ "$*" = *-XshowSettings:properties* ]]; then
+  echo "    java.specification.version = ${TEST_JAVA_VERSION:-17}" >&2
+else
+  [[ "$*" = *--help ]] || exit 1
+  [[ "${TEST_COLLECTOR_LOAD_FAIL:-false}" != true ]] || exit 1
+  echo "${TEST_COLLECTOR_HELP:-Usage: collect-stats.sh <collect|check|status|upload-pending|export> --config <file> [check: --test-upload]}"
+fi''')
     (tools / "java").symlink_to(java_home / "bin/java")
     executable(tools / "uname", "echo Linux")
     executable(tools / "id", "echo 0")
@@ -107,9 +114,22 @@ exit "${TEST_DIAGNOSTIC_EXIT:-0}"''')
     environment.pop("JAVA_HOME", None)
     base = ["bash", str(installer), "--gemfire-home", str(gemfire), "--java-home", str(java_home)]
 
-    def run(*options, success=True, version="17", timer_start_failure=False):
+    def write_build_checksums(artifact_dir):
+        jar = artifact_dir / "02-standalone-jmx.jar"
+        (artifact_dir / "02-standalone-jmx.jar.sha256").write_text(hashlib.sha256(jar.read_bytes()).hexdigest() + "  " + jar.name + "\n")
+        inputs = list((source / "src/main").rglob("*")) if (source / "src/main").exists() else []
+        inputs += [source / name for name in ("build.gradle", "settings.gradle", "gradle.properties")]
+        manifest = "".join(hashlib.sha256(p.read_bytes()).hexdigest() + "  " + p.relative_to(source).as_posix() + "\n"
+                           for p in sorted(inputs) if p.is_file())
+        (artifact_dir / "02-standalone-jmx.sources.sha256").write_text(manifest)
+
+    write_build_checksums(source / "lib")
+
+    def run(*options, success=True, version="17", timer_start_failure=False, old_collector=False, load_failure=False):
         env = dict(environment, TEST_JAVA_VERSION=version,
-                   TEST_TIMER_START_FAIL=str(timer_start_failure).lower())
+                   TEST_TIMER_START_FAIL=str(timer_start_failure).lower(),
+                   TEST_COLLECTOR_LOAD_FAIL=str(load_failure).lower())
+        if old_collector: env["TEST_COLLECTOR_HELP"] = "Usage: collect-stats.sh <collect|status|upload-pending|export>"
         result = subprocess.run(base + list(options), env=env, text=True, capture_output=True)
         assert (result.returncode == 0) == success, result.stdout + result.stderr
         return result
@@ -124,6 +144,24 @@ exit "${TEST_DIAGNOSTIC_EXIT:-0}"''')
     run(success=False)
     assert not (root / "config").exists()
     dependencies.touch()
+
+    # Missing builds, absent build metadata, corrupt/mismatched JARs and old binaries fail pre-mutation.
+    artifact = source / "lib/02-standalone-jmx.jar"
+    artifact.unlink()
+    assert "make dist" in run(success=False).stderr
+    artifact.write_bytes(b"example-jar")
+    metadata = source / "lib/02-standalone-jmx.jar.sha256"
+    metadata.unlink()
+    assert "checksum files are missing" in run(success=False).stderr
+    write_build_checksums(source / "lib")
+    artifact.write_bytes(b"corrupted-jar")
+    assert "does not match" in run(success=False).stderr
+    artifact.write_bytes(b"example-jar")
+    assert "older JAR" in run(success=False, old_collector=True).stderr
+    assert "cannot run" in run(success=False, load_failure=True).stderr
+    assert not (root / "account-passwd").exists()
+    assert not (root / "app").exists()
+    assert not (root / "trace").exists()
 
     # First install creates ready-to-edit configuration, enables boot scheduling, and stays stopped.
     staged = run()
@@ -311,6 +349,37 @@ exit "${TEST_DIAGNOSTIC_EXIT:-0}"''')
     shutil.move(source / "lib/02-standalone-jmx.jar", source / "build/libs/02-standalone-jmx.jar")
     (source / "scripts").mkdir()
     shutil.move(source / "bin/collect-stats.sh", source / "scripts/collect-stats.sh")
+    (source / "src/main/resources").mkdir(parents=True)
+    source_input = source / "src/main/resources/settings.txt"
+    source_input.write_text("original input\n")
+    (source / "build.gradle").write_text("// build fixture\n")
+    (source / "settings.gradle").write_text("// settings fixture\n")
+    write_build_checksums(source / "build/libs")
+    # A leftover distribution lib must not override a source checkout's build/libs JAR.
+    (source / "lib/02-standalone-jmx.jar").write_bytes(b"leftover-old-distribution")
+    trace_before = (root / "trace").read_text()
+    installed_before = (root / "app/lib/02-standalone-jmx.jar").read_bytes()
+    preserved_config = config.read_text()
+    # Content changes are detected even when timestamps are restored to before the build.
+    original_time = source_input.stat().st_mtime
+    source_input.write_text("edited input\n")
+    os.utime(source_input, (original_time - 3600, original_time - 3600))
+    assert "outdated" in run(success=False).stderr
+    source_input.write_text("original input\n")
+    added = source_input.with_name("added.txt")
+    added.write_text("new input\n")
+    assert "outdated" in run(success=False).stderr
+    added.unlink()
+    source_input.unlink()
+    assert "outdated" in run(success=False).stderr
+    source_input.write_text("original input\n")
+    (source / "build.gradle").write_text("// changed build\n")
+    assert "outdated" in run(success=False).stderr
+    (source / "build.gradle").write_text("// build fixture\n")
+    assert (root / "trace").read_text() == trace_before
+    assert (root / "app/lib/02-standalone-jmx.jar").read_bytes() == installed_before
+    assert config.read_text() == preserved_config
+    assert log.read_text() == "previous collection log\n"
     run("--interval-seconds", "30")
     assert report.exists()
     service = configparser.ConfigParser()
