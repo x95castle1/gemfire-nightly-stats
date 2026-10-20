@@ -176,6 +176,7 @@ install -m 0644 "$source_jar" "$APP_DIR/lib/02-standalone-jmx.jar"
 install -m 0755 "$source_launcher" "$APP_DIR/bin/collect-stats.sh"
 install -m 0755 "$INSTALLATION_DIR/collect-stats-logged.sh" "$APP_DIR/bin/collect-stats-logged.sh"
 install -m 0755 "$INSTALLATION_DIR/stop.sh" "$APP_DIR/bin/stop.sh"
+install -m 0755 "$INSTALLATION_DIR/check.sh" "$APP_DIR/bin/check.sh"
 install -d -m 0755 "$LOGROTATE_DIR"
 sed -e "1s|.*|$log_file {|" \
   -e "s/^[[:space:]]*daily$/    $log_rotate_interval/" \
@@ -253,6 +254,8 @@ else
   echo "Configure the collector, then run: sudo systemctl enable --now $SERVICE.timer"
 fi
 echo 'Timer activation does not confirm JMX collection or S3 delivery; check the service results.'
+echo "Connection diagnostics: sudo $APP_DIR/bin/check.sh"
+echo "Optional diagnostic object upload (retained in S3): sudo $APP_DIR/bin/check.sh --test-upload"
 echo "Status: sudo systemctl list-timers --all $SERVICE.timer"
 echo "Last run: sudo systemctl show $SERVICE.service -p Result -p ExecMainStatus -p ExecMainExitTimestamp"
 echo "Logs: sudo journalctl -u $SERVICE.service -f"

@@ -47,6 +47,16 @@ with tempfile.TemporaryDirectory(prefix="collector-install-check-") as temporary
     installer.write_text(script)
     stopper = source / "installation/stop.sh"
     stopper.write_text(stopper.read_text().replace("/run/systemd/system", str(root / "systemd")))
+    checker = source / "installation/check.sh"
+    check_script = checker.read_text()
+    for before, after in {
+        "/opt/gemfire-nightly-stats": str(root / "app"),
+        "/etc/gemfire-nightly-stats": str(root / "config"),
+        "/var/lib/gemfire-nightly-stats": str(root / "state"),
+        "/run/systemd/system": str(root / "systemd"),
+    }.items():
+        check_script = check_script.replace(before, after)
+    checker.write_text(check_script)
     gemfire = root / "gemfire"
     (gemfire / "lib").mkdir(parents=True)
     dependencies = gemfire / "lib/gemfire-dependencies.jar"
@@ -88,6 +98,8 @@ case "$1" in
 esac''')
     for manager in ("apt", "apt-get", "yum", "dnf"):
         executable(tools / manager, 'echo package-manager-called >> "$FIXTURE/trace"\nexit 99')
+    executable(tools / "systemd-run", '''printf '%s\\n' "$@" > "$FIXTURE/check-command"
+exit "${TEST_DIAGNOSTIC_EXIT:-0}"''')
     environment = os.environ.copy()
     environment.update(PATH=str(tools) + os.pathsep + environment["PATH"],
                        FIXTURE=str(root), REAL_INSTALL=real_install)
@@ -126,6 +138,9 @@ esac''')
     assert (root / "app/lib/02-standalone-jmx.jar").read_bytes() == b"example-jar"
     assert (root / "app/bin/stop.sh").read_text() == stopper.read_text()
     assert stat.S_IMODE((root / "app/bin/stop.sh").stat().st_mode) == 0o755
+    assert (root / "app/bin/check.sh").read_text() == check_script
+    assert stat.S_IMODE((root / "app/bin/check.sh").stat().st_mode) == 0o755
+    assert "Connection diagnostics: sudo " + str(root / "app/bin/check.sh") in staged.stdout
     log = root / "logs/gemfire-nightly-stats/collector.log"
     assert log.exists()
     assert stat.S_IMODE(log.stat().st_mode) == 0o640
@@ -343,6 +358,26 @@ exit "${TEST_COLLECTOR_EXIT:-0}"''')
     saved_logs = log.read_text()
     run("--interval-seconds", "30")
     assert log.read_text() == saved_logs, "Reinstallation must retain existing logs"
+
+    # The VM helper uses a separate service context, preserves exit codes and never touches scheduling.
+    trace_before = (root / "trace").read_text()
+    for exit_status in (0, 2, 3, 4):
+        diagnostic = subprocess.run(["bash", str(root / "app/bin/check.sh"), "--test-upload"],
+                                    env=dict(environment, TEST_DIAGNOSTIC_EXIT=str(exit_status)),
+                                    text=True, capture_output=True)
+        assert diagnostic.returncode == exit_status, diagnostic.stdout + diagnostic.stderr
+        command = (root / "check-command").read_text().splitlines()
+        assert "--wait" in command and "--pipe" in command and "--collect" in command
+        assert "--property=User=gemfire-stats" in command
+        assert f"--property=EnvironmentFile={env_file}" in command
+        assert f"--property=WorkingDirectory={root / 'state'}" in command
+        assert command[-5:] == [str(root / "app/bin/collect-stats.sh"), "check", "--config", str(config), "--test-upload"]
+    assert (root / "trace").read_text() == trace_before
+    assert log.read_text() == saved_logs
+    assert config.read_text() == custom.read_text()
+    rejected_check = subprocess.run(["bash", str(root / "app/bin/check.sh"), "--arbitrary"],
+                                    env=environment, text=True, capture_output=True)
+    assert rejected_check.returncode == 2
 
     # Stopping disables scheduling before stopping a collection, preserves data and is repeatable.
     (root / "service-active").touch()

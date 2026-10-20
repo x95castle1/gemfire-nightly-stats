@@ -35,16 +35,17 @@ public final class NightlyStatsMain {
 
     static int run(String[] args, PrintStream out, PrintStream err, Source source) {
         if (args.length == 0 || Arrays.asList(args).contains("--help")) {
-            out.println("Usage: collect-stats.sh <collect|status|upload-pending|export> --config <file>"
+            out.println("Usage: collect-stats.sh <collect|check|status|upload-pending|export> --config <file>"
+                    + " [check: --test-upload]"
                     + " [export: --output <archive.zip> [--from yyyy-MM-dd] [--to yyyy-MM-dd]]");
             return args.length == 0 ? CONFIG_ERROR : OK;
         }
         try {
             String command = args[0];
-            if (!Set.of("collect", "status", "upload-pending", "export").contains(command)) {
+            if (!Set.of("collect", "check", "status", "upload-pending", "export").contains(command)) {
                 throw new IllegalArgumentException("Unknown command: " + command);
             }
-            Map<String, String> options = options(args, command.equals("export"));
+            Map<String, String> options = options(args, command);
             Properties properties = new Properties();
             try (var input = Files.newInputStream(Path.of(requiredOption(options, "--config")))) {
                 properties.load(input);
@@ -52,6 +53,9 @@ public final class NightlyStatsMain {
                 throw new IllegalArgumentException("Cannot read --config: " + e.getMessage(), e);
             }
             StatsSettings settings = new StatsSettings(properties);
+            if (command.equals("check")) {
+                return new ConnectionDiagnostics(settings, source).run(options.containsKey("--test-upload"), out, err);
+            }
             String env = StatsSettings.segment("ENV", settings.required("ENV"));
             String cluster = StatsSettings.segment("CLUSTER_NAME", settings.required("CLUSTER_NAME"));
             ReportStore store = new ReportStore(Path.of(settings.get("REPORT_DIR", "reports")).resolve(env).resolve(cluster), cluster);
@@ -169,14 +173,22 @@ public final class NightlyStatsMain {
         return status;
     }
 
-    private static Map<String, String> options(String[] args, boolean exporting) {
-        Set<String> allowed = exporting ? Set.of("--config", "--output", "--from", "--to") : Set.of("--config");
+    private static Map<String, String> options(String[] args, String command) {
+        Set<String> allowed = command.equals("export") ? Set.of("--config", "--output", "--from", "--to") : Set.of("--config");
         Map<String, String> result = new LinkedHashMap<>();
-        for (int i = 1; i < args.length; i += 2) {
+        for (int i = 1; i < args.length;) {
+            if (command.equals("check") && args[i].equals("--test-upload")) {
+                if (result.putIfAbsent(args[i], "true") != null) {
+                    throw new IllegalArgumentException("Duplicate option: --test-upload");
+                }
+                i++;
+                continue;
+            }
             if (!allowed.contains(args[i]) || i + 1 == args.length || args[i + 1].startsWith("--")
                     || result.putIfAbsent(args[i], args[i + 1]) != null) {
                 throw new IllegalArgumentException("Unknown, duplicate or incomplete option: " + args[i]);
             }
+            i += 2;
         }
         return result;
     }

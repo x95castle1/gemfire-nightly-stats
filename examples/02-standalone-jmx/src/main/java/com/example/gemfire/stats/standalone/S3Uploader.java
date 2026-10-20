@@ -81,6 +81,15 @@ final class S3Uploader {
         return withoutDefaultPort(endpoint);
     }
 
+    /** Non-writing reachability/TLS probe. An HTTP response does not establish upload permission. */
+    int probe() throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(destination()))
+                .timeout(REQUEST_TIMEOUT)
+                .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                .build();
+        return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+    }
+
     /** Uploads body as the object key, replacing any existing object. Throws on any non-2xx response. */
     void put(String key, byte[] body, String contentType) throws IOException, InterruptedException {
         String canonicalUri = "/" + encodePath(bucket) + "/" + encodePath(key);
@@ -111,8 +120,18 @@ final class S3Uploader {
             if (error.length() > MAX_ERROR_BODY) {
                 error = error.substring(0, MAX_ERROR_BODY) + "...";
             }
-            throw new IOException("PUT " + destination() + "/" + key + " returned HTTP "
+            throw new HttpStatusException(response.statusCode(), "PUT " + destination() + "/" + key + " returned HTTP "
                     + response.statusCode() + ": " + error.strip());
+        }
+    }
+
+    /** Keeps diagnostics useful without copying potentially sensitive response bodies to their output. */
+    static final class HttpStatusException extends IOException {
+        final int statusCode;
+
+        HttpStatusException(int statusCode, String message) {
+            super(message);
+            this.statusCode = statusCode;
         }
     }
 

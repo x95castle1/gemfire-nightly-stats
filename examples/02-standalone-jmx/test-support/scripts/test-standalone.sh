@@ -38,6 +38,11 @@ if [ "$TEST_AUTH" = true ]; then
   echo 'JMX_USERNAME=clusterread' >> "$CONFIG"
   echo 'JMX_PASSWORD=clusterread' >> "$CONFIG"
 fi
+"$COLLECTOR" check --config "$CONFIG" > "$TEST_ROOT/check.json" 2> "$TEST_ROOT/check.err"
+jq -e '.command == "check" and .exit_code == 0 and
+  any(.checks[]; .name == "jmx" and .status == "PASS") and
+  any(.checks[]; .name == "s3_connectivity" and .status == "SKIPPED")' "$TEST_ROOT/check.json" >/dev/null
+[[ ! -e "$TEST_ROOT/reports" ]] || { echo 'Diagnostics unexpectedly left a report directory.' >&2; exit 1; }
 "$COLLECTOR" collect --config "$CONFIG" > "$TEST_ROOT/collection.json"
 jq -e '.collection_succeeded == true and .delivery_mode == "local" and .pending_uploads == null' "$TEST_ROOT/collection.json" >/dev/null
 REPORT=$(jq -r .report_file "$TEST_ROOT/collection.json")
@@ -53,6 +58,10 @@ if [ "$TEST_MODE" = standalone ] && find "$TEST_ROOT/locator" -name 'test-cluste
 fi
 if [ "$TEST_AUTH" = true ]; then
   sed 's/JMX_PASSWORD=clusterread/JMX_PASSWORD=wrong/' "$CONFIG" > "$TEST_ROOT/bad-password.properties"
+  diagnostic_failure=0
+  "$COLLECTOR" check --config "$TEST_ROOT/bad-password.properties" > "$TEST_ROOT/check-rejected.json" 2> "$TEST_ROOT/check-rejected.err" || diagnostic_failure=$?
+  [[ "$diagnostic_failure" = 3 ]]
+  jq -e 'any(.checks[]; .name == "jmx" and .status == "FAIL")' "$TEST_ROOT/check-rejected.json" >/dev/null
   failure=0
   "$COLLECTOR" collect --config "$TEST_ROOT/bad-password.properties" > "$TEST_ROOT/rejected.json" 2> "$TEST_ROOT/rejected.err" || failure=$?
   [ "$failure" = 3 ] || { echo "Wrong password returned $failure, expected 3" >&2; exit 1; }

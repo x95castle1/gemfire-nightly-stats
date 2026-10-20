@@ -42,6 +42,7 @@ sudo ./installation/install.sh \
   --java-home /usr/lib/jvm/java-17-openjdk-amd64
 
 sudoedit /etc/gemfire-nightly-stats/collector.properties
+sudo /opt/gemfire-nightly-stats/bin/check.sh
 sudo systemctl enable --now gemfire-nightly-stats.timer
 ```
 
@@ -137,6 +138,7 @@ that sort after it can still override it.
 | `/opt/gemfire-nightly-stats/bin/collect-stats.sh` | Existing standalone launcher |
 | `/opt/gemfire-nightly-stats/bin/collect-stats-logged.sh` | Service launcher copying collection output to the log file and journal |
 | `/opt/gemfire-nightly-stats/bin/stop.sh` | Stop the collector process and disable its timer |
+| `/opt/gemfire-nightly-stats/bin/check.sh` | Run connection diagnostics with the installed runtime and service account |
 | `/opt/gemfire-nightly-stats/lib/02-standalone-jmx.jar` | Complete collector application |
 | `/etc/gemfire-nightly-stats/collector.properties` | JMX, report and optional S3 configuration |
 | `/etc/gemfire-nightly-stats/collector.env` | Selected Java/GemFire runtime paths and JVM options only |
@@ -235,6 +237,36 @@ If that timer is disabled, enable Ubuntu's existing rotation job:
 ```sh
 sudo systemctl enable --now logrotate.timer
 ```
+
+## Connection diagnostics
+
+After installation, run:
+
+```sh
+sudo /opt/gemfire-nightly-stats/bin/check.sh
+# Optional: verify object-write permission, leaving a unique diagnostic object in S3.
+sudo /opt/gemfire-nightly-stats/bin/check.sh --test-upload
+```
+
+The helper uses a separate transient systemd unit with the same service account, runtime
+EnvironmentFile, working directory, umask and private temporary directory as collection.
+It requires `sudo` and `systemd-run`, uses the installed properties, and returns the diagnostic
+exit code. It does not start/stop the collection timer, replace the collection service's last
+result, or append diagnostic output to the collection log file. The installer prints these
+commands but does not run them automatically. Rebuild and reinstall to add the helper to an
+older installation.
+
+Results are JSON on stdout and progress on stderr. Checks validate configuration, temporary
+report-directory write/read access, existing JMX certificate stores, JMX authentication and
+management reads, and S3 endpoint connectivity/TLS. Normal checks save no report or S3 object.
+`--test-upload` requires S3 delivery and leaves a small diagnostic object under the configured
+cluster prefix's `_diagnostics/` directory; its unique key is included in the results. No
+report receipts or health history are changed. It tests S3 independently of JMX/storage failures.
+
+S3 HTTPS uses the JVM default SSL context; S3-specific certificate configuration is still
+planned. Endpoint reachability alone does not verify bucket access or upload permission.
+Warnings alone return `0`; configuration failures return `2`, storage/JMX failures `3`, and
+S3 failures `4`, in that precedence order. See the [full command reference](../README.md#connection-diagnostics).
 
 ## Operate the collector
 

@@ -34,6 +34,18 @@ offline_upload() {
 }
 
 # Enable S3 after collecting locally, and prove both delivery and receipt persistence.
+"$COLLECTOR" check --config "$S3_CONFIG" > "$TEST_ROOT/check-s3.json" 2> "$TEST_ROOT/check-s3.err"
+jq -e '.exit_code == 0 and any(.checks[]; .name == "s3_connectivity" and .status == "PASS") and
+  any(.checks[]; .name == "s3_upload" and .status == "SKIPPED")' "$TEST_ROOT/check-s3.json" >/dev/null
+"$COLLECTOR" check --config "$S3_CONFIG" --test-upload > "$TEST_ROOT/check-upload.json" 2> "$TEST_ROOT/check-upload.err"
+DIAGNOSTIC_KEY=$(jq -er '.checks[] | select(.name == "s3_upload" and .status == "PASS") | .object_key' "$TEST_ROOT/check-upload.json")
+curl --silent --show-error --fail --aws-sigv4 'aws:amz:us-east-1:s3' \
+  --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+  "${S3_ENDPOINT%/}/$S3_BUCKET/$DIAGNOSTIC_KEY" > "$TEST_ROOT/diagnostic-object.txt"
+grep -q '^GemFire collector connection check at ' "$TEST_ROOT/diagnostic-object.txt"
+"$COLLECTOR" status --config "$S3_CONFIG" > "$TEST_ROOT/after-diagnostics.json"
+jq -e --argjson count "$INITIAL_COUNT" '.saved_reports == $count and .pending_uploads == $count' "$TEST_ROOT/after-diagnostics.json" >/dev/null
+[[ ! -e "$(dirname "$ORIGINAL_REPORT")/.uploaded" ]] || { echo 'Diagnostics unexpectedly wrote upload receipts.' >&2; exit 1; }
 offline_upload "$TEST_ROOT/backfill.json"
 jq -e --argjson count "$INITIAL_COUNT" '.uploaded == $count and .pending_uploads == 0 and .upload_error == null' "$TEST_ROOT/backfill.json" >/dev/null
 verify_bytes
